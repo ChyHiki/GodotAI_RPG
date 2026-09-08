@@ -85,8 +85,9 @@ func _snap_to_target() -> void:
 
 
 ## 处理鼠标环绕输入。只有鼠标被捕获(游戏内)时才响应。
-## 实现：把鼠标相对位移按灵敏度换算成 yaw/pitch 增量，俯仰角做钳制。
-func _unhandled_input(event: InputEvent) -> void:
+## 用 _input(而不是 _unhandled_input)：_input 对每个原始事件最先触发，
+## 即使某个 UI 控件吃掉事件，环绕也不会失灵。
+func _input(event: InputEvent) -> void:
     if Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
         return
     if event is InputEventMouseMotion:

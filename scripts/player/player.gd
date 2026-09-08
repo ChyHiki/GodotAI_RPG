@@ -1,7 +1,7 @@
 extends CharacterBody3D
 class_name PlayerCharacter
 ## ============================================================
-## 玩家角色：状态机 + 程序化外观
+## 玩家角色：状态机 + 外观（支持外部模型 / 原语兜底）
 ## ============================================================
 ## 【这个脚本做了什么】
 ##   第三人称动作游戏的主角控制：
@@ -9,7 +9,14 @@ class_name PlayerCharacter
 ##     - 翻滚：Shift，带位移与全程无敌帧（用来躲敌人攻击）
 ##     - 攻击：鼠标左键挥剑，命中面前敌人造成伤害
 ##     - 受击/死亡：被打会硬直+击退+闪白；血空倒地死亡
-##   外观是运行时用"胶囊体/球/方块"原语拼装的蓝色小机器人，无美术依赖。
+##
+## 【外观两种形态】
+##   1) 外部模型（默认）：加载 artifacts/models/player_knight/player_knight.glb，
+##      自动测量模型高度缩放到 1.8m 并落到脚底 y=0。
+##      该 GLB 无骨骼无动画，因此仍由本脚本做"整体姿态"（奔跑起伏/翻滚旋转/
+##      攻击前倾/受击后仰/死亡倒地）与受击闪光。
+##   2) 原语兜底：找不到模型时用胶囊/球/方块拼装的"小蓝人"，
+##      支持更细的肢体动画（摆腿/挥剑），逻辑保持不变。
 ##
 ## 【状态机设计（核心）】
 ##   state 变量保存当前状态，_physics_process 里按状态算速度，
@@ -20,12 +27,18 @@ class_name PlayerCharacter
 ##     MOVE            ◀──超时── ATTACK / ROLL / HURT
 ##     HURT(受击硬直)  ──被打死──▶ DEAD(倒地)
 ##
+## 【输入读取方式】
+##   攻击/翻滚在 _physics_process 里用 Input.is_action_just_pressed 轮询，
+##   而不是靠 _unhandled_input 事件回调 —— 轮询不依赖事件是否被 UI 吃掉，
+##   更稳定。镜头鼠标环绕在 camera 脚本里用 _input 读取。
+##
 ## 【节点结构】
 ##   Player(CharacterBody3D，本脚本)
 ##   ├─ CollisionShape3D   胶囊碰撞(决定"身体"占多大)
 ##   ├─ Health             通用血量组件(scripts/components/health.gd)
-##   └─ VisualPivot(代码生成) 所有外观网格的父亲；
-##       只转它就能"转向"，碰撞体不受影响（这是常见动作游戏做法）
+##   └─ VisualPivot(代码生成) 外观根节点：只转它=转身，碰撞体不受影响
+##       ├─ KnightModel 或 原语各部件
+##       └─ AttackHitbox 攻击命中盒(Area3D)
 ## ============================================================
 
 ## 信号：玩家死亡（主场景收到后显示死亡遮罩）
@@ -56,6 +69,19 @@ const GRAVITY := 24.0
 
 
 # ------------------------------------------------------------------
+# 玩家模型（可选）。要换角色模型时，替换这里的路径即可
+# ------------------------------------------------------------------
+
+## 玩家外观模型（.glb/.tscn 均可）。无骨骼动画的静态部件模型也可用。
+const PLAYER_MODEL := preload("res://artifacts/models/player_knight/player_knight.glb")
+## 模型应缩放到的"站高"(米)。碰撞胶囊高 1.8，默认让模型与之匹配
+const MODEL_TARGET_HEIGHT := 1.8
+
+## 是否正在使用外部模型（true=用模型；false=用原语小蓝人兜底）
+var _use_model: bool = false
+
+
+# ------------------------------------------------------------------
 # 运行时状态变量
 # ------------------------------------------------------------------
 
@@ -67,17 +93,19 @@ var _dead: bool = false            # 是否已死亡（死亡后忽略一切输�
 
 
 # ------------------------------------------------------------------
-# 程序化外观引用（_build_body 创建，动画/朝向要靠它们）
+# 外观引用
 # ------------------------------------------------------------------
 
 var _pivot: Node3D                 # VisualPivot：外观根节点，旋转=转身
+## —— 仅"原语小蓝人"模式用 ——
 var _shoulder_r: Node3D            # 右肩节点（剑挂在它下面，挥剑=转它）
 var _shoulder_l: Node3D            # 左肩节点
 var _leg_r: Node3D                 # 右腿节点（走路时摆腿）
 var _leg_l: Node3D                 # 左腿节点
+## —— 通用 ——
 var _hitbox: Area3D                # 攻击命中盒（面前的长方体感应区）
 var _hit_targets: Array = []       # 本刀已经打中的敌人（防止一刀多次伤害）
-var _mats: Array[StandardMaterial3D] = []  # 所有部件的材质（受击闪白要批量改它们）
+var _mats: Array[StandardMaterial3D] = []  # 外观材质（受击闪白要批量改它们）
 
 
 # ------------------------------------------------------------------
@@ -101,17 +129,9 @@ var _hurt_from: Vector3 = Vector3.ZERO # 受击来源位置（决定击退方向
 ## 进入场景：注册组、拼装外观、接通命中盒信号、监听血量归零。
 func _ready() -> void:
     add_to_group("player")         # 让敌人AI/镜头/主场景能按组找到玩家
-    _build_body()                  # 用原语网格拼出蓝色小机器人
+    _build_body()                  # 优先用骑士模型，失败则回退原语小蓝人
     _connect_hitbox_signals()      # 命中盒的"有东西进入"信号接好
     health.died.connect(_on_health_died)
-
-
-## 输入入口：攻击/翻滚键只在按下那一瞬间判定（is_action_pressed）
-func _unhandled_input(event: InputEvent) -> void:
-    if event.is_action_pressed("attack"):
-        _try_start_attack()
-    elif event.is_action_pressed("roll"):
-        _try_start_roll()
 
 
 ## 供外部(AI/主场景)查询：还活着吗？
@@ -119,11 +139,16 @@ func is_alive() -> bool:
     return not _dead
 
 
-## 物理帧主循环：推进计时 → 更新期望方向 → 更新速度 → 移动 → 检查状态切换
+## 物理帧主循环：推进计时 → 轮询攻击/翻滚键 → 更新方向/速度 → 移动 → 检查状态切换
 func _physics_process(delta: float) -> void:
     _state_time += delta                           # 状态计时
     _attack_cooldown = maxf(0.0, _attack_cooldown - delta)
     _iframes = maxf(0.0, _iframes - delta)         # 无敌倒计时递减
+    # ★ 攻击/翻滚用"轮询"读取：不依赖事件是否被 UI 吞掉，稳定可靠
+    if Input.is_action_just_pressed("attack"):
+        _try_start_attack()
+    if Input.is_action_just_pressed("roll"):
+        _try_start_roll()
     _update_wish_dir()                             # 读输入算出移动意图
     _update_velocity(delta)                        # 按状态给 velocity 赋值
     move_and_slide()                               # 让引擎真正移动+碰撞+落地
@@ -297,7 +322,7 @@ func _on_health_died() -> void:
     _die()
 
 
-## 进入死亡：锁死一切行动、解除碰撞交互、广播 player_died（主场景弹遮罩）。
+## 进入死亡：锁死一切行动、广播 player_died（主场景弹遮罩）。
 func _die() -> void:
     if _dead:            # 防重复触发（damage 内部信号与外部调用可能双到）
         return
@@ -406,16 +431,105 @@ func _set_hitbox_active(active: bool) -> void:
 
 
 # ------------------------------------------------------------------
-# 程序化外观构建（用原语拼小蓝人）
+# 外观构建入口
 # ------------------------------------------------------------------
 
-## 拼接身体：腰以下部件都挂在 VisualPivot 下；
-## 手臂/腿是"关节节点"，网格作为其子节点偏移，这样旋转关节=摆肢体。
+## 搭外观：先尝试加载外部模型(PLAYER_MODEL)；失败则用原语小蓝人兜底。
+## 无论哪种，都会创建攻击命中盒挂在 VisualPivot 下(随朝向转动)。
 func _build_body() -> void:
     _pivot = Node3D.new()
     _pivot.name = "VisualPivot"
     add_child(_pivot)
 
+    if PLAYER_MODEL != null:
+        _use_model = _setup_model()      # 尝试把骑士模型装进 VisualPivot
+    if not _use_model:
+        _build_robot_visuals()           # 兜底：原语小蓝人
+    _create_attack_hitbox()              # 共用命中盒
+
+
+## 加载并安置外部模型。
+## 实现三步：
+##   1. 实例化 GLB；
+##   2. 递归收集每个网格部件，用它们的包围盒+节点变换算出模型总包围盒；
+##   3. 按 MODEL_TARGET_HEIGHT 统一缩放，并平移到脚底 y=0、水平居中。
+## 同时把部件材质登记进 _mats（受击闪光用）。
+func _setup_model() -> bool:
+    var model := PLAYER_MODEL.instantiate() as Node3D
+    _pivot.add_child(model)
+    model.name = "KnightModel"
+
+    # 递归收集所有 MeshInstance3D 及其"相对模型根"的变换
+    var meshes: Array = []   # 每个元素 { "node": MeshInstance3D, "xform": Transform3D }
+    _collect_meshes(model, Transform3D.IDENTITY, meshes)
+    if meshes.is_empty():
+        model.queue_free()   # 空模型 → 放弃使用
+        return false
+
+    # 计算总包围盒(模型局部坐标，未缩放)
+    var mn := Vector3.INF
+    var mx := -Vector3.INF
+    for info in meshes:
+        var mi: MeshInstance3D = info["node"]
+        var aabb: AABB = mi.get_aabb()
+        for corner in _aabb_corners(aabb):
+            var p := (info["xform"] as Transform3D) * corner
+            mn = mn.min(p)
+            mx = mx.max(p)
+    if mx.y - mn.y <= 0.001:
+        model.queue_free()
+        return false
+
+    # 统一缩放到目标身高，并让脚底对齐 y=0、水平居中
+    var s := MODEL_TARGET_HEIGHT / (mx.y - mn.y)
+    model.scale = Vector3.ONE * s
+    model.position = Vector3(
+        -(mn.x + mx.x) * 0.5 * s,
+        -mn.y * s,
+        -(mn.z + mx.z) * 0.5 * s
+    )
+
+    # 登记材质：GLTF 导入后通常是每个面一个 StandardMaterial3D
+    for info in meshes:
+        var mi: MeshInstance3D = info["node"]
+        var mesh: Mesh = mi.mesh
+        if mesh == null:
+            continue
+        for surface in mesh.get_surface_count():
+            var mat := mi.get_active_material(surface)
+            if mat is StandardMaterial3D and not _mats.has(mat):
+                _mats.append(mat)
+    return true
+
+
+## 递归收集模型下所有网格部件和它们相对根节点的累计变换。
+func _collect_meshes(node: Node3D, parent_xform: Transform3D, out: Array) -> void:
+    var xform: Transform3D = parent_xform * node.transform
+    if node is MeshInstance3D:
+        out.append({ "node": node, "xform": xform })
+    for child in node.get_children():
+        _collect_meshes(child as Node3D, xform, out)
+
+
+## 返回 AABB 的 8 个角点（显式类型，供循环直接推断）。
+func _aabb_corners(aabb: AABB) -> Array[Vector3]:
+    var p := aabb.position
+    var s := aabb.size
+    var out: Array[Vector3] = [
+        p, p + Vector3(s.x, 0, 0), p + Vector3(0, s.y, 0), p + Vector3(0, 0, s.z),
+        p + Vector3(s.x, s.y, 0), p + Vector3(s.x, 0, s.z), p + Vector3(0, s.y, s.z),
+        p + s
+    ]
+    return out
+
+
+# ------------------------------------------------------------------
+# 原语小蓝人外观（兜底方案）
+# ------------------------------------------------------------------
+
+## 拼接身体：腰以下部件都挂在 VisualPivot 下；
+## 手臂/腿是"关节节点"，网格作为其子节点偏移，这样旋转关节=摆肢体。
+func _build_robot_visuals() -> void:
     # ---- 腿（两根胶囊，挂在髋部高度）----
     var leg_mat := _make_mat(Color(0.16, 0.36, 0.68), 0.35, 0.55)  # 深蓝
     _leg_r = _limb(Vector3(0.17, 0.62, 0.0))    # 右腿关节
@@ -449,7 +563,9 @@ func _build_body() -> void:
     _add_box_mesh(_shoulder_r, Vector3(0.03, -0.66, 0.02), Vector3(0.07, 0.5, 0.04), sword_mat)
     _add_box_mesh(_shoulder_r, Vector3(0.03, -0.28, 0.02), Vector3(0.09, 0.16, 0.07), grip_mat)
 
-    # ---- 攻击命中盒：面前的长方体感应区(平时关闭，判定帧才开) ----
+
+## 攻击命中盒：面前的长方体感应区(平时关闭，判定帧才开)。两种外观共用。
+func _create_attack_hitbox() -> void:
     _hitbox = Area3D.new()
     _hitbox.name = "AttackHitbox"
     _hitbox.monitoring = false   # 默认不检测
@@ -528,6 +644,7 @@ func _add_box_mesh(parent: Node3D, pos: Vector3, size: Vector3, mat: StandardMat
 # ------------------------------------------------------------------
 
 ## 把所有部件材质打开自发光并设强度 → 角色瞬间发白（受击反馈）。
+## 对外部模型同样生效（GLB 材质也登记进了 _mats）。
 func _flash(intensity: float) -> void:
     for mat in _mats:
         mat.emission_enabled = true
@@ -548,7 +665,7 @@ func _decay_flash(delta: float) -> void:
 
 
 # ------------------------------------------------------------------
-# 程序化姿态动画（_process 每帧按状态摆姿势）
+# 姿态动画（_process 每帧按状态摆姿势）
 # 原理：旋转各"关节节点"或用正弦波做循环动作；所有 lerp 都带
 # 1-exp(-k*dt) 平滑，切换自然不跳变。
 # ------------------------------------------------------------------
@@ -557,6 +674,14 @@ func _process(delta: float) -> void:
     _decay_flash(delta)
     if _pivot == null:
         return
+    if _use_model:
+        _animate_model(delta)      # 骑士模型：整体姿态
+    else:
+        _animate_robot(delta)      # 原语小蓝人：肢体级动画
+
+
+## 原语小蓝人的肢体动画（甩腿/挥剑/收臂等，见状态枚举）。
+func _animate_robot(delta: float) -> void:
     match state:
         State.MOVE:
             # 走路/待机：腿摆动 + 身体起伏 + 手臂闲逛轻摆
@@ -611,5 +736,51 @@ func _process(delta: float) -> void:
             _shoulder_l.rotation.x = lerpf(_shoulder_l.rotation.x, 0.9, 1.0 - exp(-10.0 * delta))
         State.DEAD:
             # 死亡：0.55 秒内向前栽倒(-90°)，略微抬离地面避免插进地板
+            _pivot.rotation.x = -PI / 2.0 * clampf(_state_time / 0.55, 0.0, 1.0)
+            _pivot.position.y = lerpf(_pivot.position.y, 0.08, 1.0 - exp(-6.0 * delta))
+
+
+## 骑士模型的整体姿态动画。
+## 该模型没有骨骼，无法摆单个肢体，因此用"整身姿态"表达动作：
+##   跑动 = 上下起伏 + 前倾；翻滚 = 整身前滚翻；攻击 = 前倾突刺；受击 = 后仰。
+func _animate_model(delta: float) -> void:
+    match state:
+        State.MOVE:
+            var spd := Vector2(velocity.x, velocity.z).length()
+            var moving := spd > 0.5
+            var t := clampf(spd / move_speed, 0.0, 1.0)
+            # 跑步起伏
+            var bob := sin(_bob_phase * 2.0) * 0.04 * t
+            _pivot.position.y = bob
+            # 跑步前倾(rotation.x 转负 = 顶部朝前压)；静止回正
+            var lean := -0.12 * t
+            _pivot.rotation.x = lerp_angle(_pivot.rotation.x, lean, 1.0 - exp(-8.0 * delta))
+        State.ROLL:
+            # 整身前滚翻一圈
+            var p := clampf(_state_time / roll_time, 0.0, 1.0)
+            _pivot.rotation.x = -TAU * p
+            _pivot.position.y = 0.0
+        State.ATTACK:
+            # 整体突刺表达挥砍：起手稍后仰 → 判定帧前倾刺出 → 收招回正
+            var windup := attack_active_start
+            var slash := attack_active_end
+            if _state_time < windup:
+                var k := _state_time / windup
+                _pivot.rotation.x = lerp_angle(_pivot.rotation.x, 0.18, k * k)   # 后仰蓄力
+            elif _state_time < slash:
+                var k := (_state_time - windup) / (slash - windup)
+                _set_hitbox_active(true)
+                _pivot.rotation.x = lerp_angle(_pivot.rotation.x, -0.5, sqrt(k))  # 前倾突刺
+            else:
+                _set_hitbox_active(false)
+                var k := (_state_time - slash) / maxf(0.01, attack_total - slash)
+                _pivot.rotation.x = lerp_angle(_pivot.rotation.x, 0.0, k * k)     # 回正
+            _pivot.position.y = 0.0
+        State.HURT:
+            # 受击后仰
+            _pivot.rotation.x = lerp_angle(_pivot.rotation.x, 0.35, 1.0 - exp(-10.0 * delta))
+            _pivot.position.y = 0.0
+        State.DEAD:
+            # 死亡前栽
             _pivot.rotation.x = -PI / 2.0 * clampf(_state_time / 0.55, 0.0, 1.0)
             _pivot.position.y = lerpf(_pivot.position.y, 0.08, 1.0 - exp(-6.0 * delta))

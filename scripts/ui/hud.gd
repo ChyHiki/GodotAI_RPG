@@ -153,6 +153,19 @@ func _build_hud() -> void:
     _death_overlay.add_child(hint)
     add_child(_death_overlay)
 
+    # 关键：让所有 HUD 控件"不拦截鼠标事件"。
+    # Control 默认会吃掉落在自己范围内的点击/移动事件，导致
+    # 血条/准星/文字下方的鼠标点击到不了游戏（镜头环绕、攻击都会失灵）。
+    _set_mouse_ignore(self)
+
+
+## 递归把本 HUD 下所有 Control 的 mouse_filter 设为 IGNORE（完全透明给鼠标）。
+func _set_mouse_ignore(node: Node) -> void:
+    for child in node.get_children():
+        if child is Control:
+            (child as Control).mouse_filter = Control.MOUSE_FILTER_IGNORE
+        _set_mouse_ignore(child)
+
 
 ## 制作一根"血条"：返回一个 300x20 的 Control，
 ## 内含两个 ColorRect：孩子[0]=深色底，孩子[1]=彩色填充(调用方需保存)。

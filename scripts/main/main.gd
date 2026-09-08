@@ -32,6 +32,8 @@ var _player: PlayerCharacter
 var _enemy: EnemyBrute
 var _hud: Hud
 var _camera: ThirdPersonCamera
+## 玩家是否死亡：死亡遮罩期间不强行捕获鼠标（否则玩家看不到"按R重来"提示）
+var _player_dead: bool = false
 
 
 ## 场景启动入口：按依赖顺序搭好一切，最后捕获鼠标并显示操作提示。
@@ -51,7 +53,7 @@ func _ready() -> void:
     _camera.set_target(_player)
     # 5) 捕获鼠标（第一人称视角操作），并弹出操作提示
     Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
-    _hud.show_message("击败红甲守卫！\nWASD 移动 · 鼠标视角 · 左键攻击 · Shift 翻滚", 6.0)
+    _hud.show_message("击败红甲守卫！\nWASD 移动 · 鼠标视角 · 左键攻击 · Shift 翻滚\n（若视角转不动，先点一下游戏窗口）", 6.0)
 
 
 ## 处理"全局性"输入：R 重开 / Esc 释放鼠标 / 点击重新捕获。
@@ -67,9 +69,19 @@ func _unhandled_input(event: InputEvent) -> void:
         else:
             Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
         return
-    # 鼠标可见状态下点击窗口任意处 → 重新捕获鼠标（继续游戏）
-    if event is InputEventMouseButton and event.pressed:
+    # 鼠标可见状态下点击窗口任意处 → 重新捕获鼠标（继续游戏）。
+    # 死亡遮罩期间不抢鼠标（免得遮住"按R重来"提示）。
+    if not _player_dead and event is InputEventMouseButton and event.pressed:
         if Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
+            Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+
+
+## 窗口重新获得焦点时自动恢复鼠标捕获。
+## 修复场景：游戏刚启动时窗口没拿到焦点，鼠标一直未被捕获 → 无法转视角。
+## 只要玩家还活着，切回游戏窗口就会自动重新捕获。
+func _notification(what: int) -> void:
+    if what == NOTIFICATION_APPLICATION_FOCUS_IN:
+        if not _player_dead:
             Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 
 
@@ -83,7 +95,7 @@ func _spawn_player() -> void:
     _player = PLAYER_SCENE.instantiate() as PlayerCharacter
     add_child(_player)
     _player.global_position = PLAYER_SPAWN
-    # 注意：Health 组件的 changed 信号签名是 (int, int)，正好对接 Hud.set_player_hp
+    # Health 组件的 changed 信号签名是 (int, int)，正好对接 Hud.set_player_hp
     _player.health.changed.connect(_hud.set_player_hp)
     _player.player_died.connect(_on_player_died)
     _hud.set_player_hp(_player.health.current_hp, _player.health.max_hp)
@@ -117,8 +129,9 @@ func _on_enemy_died() -> void:
     timer.timeout.connect(_spawn_enemy)
 
 
-## 玩家死亡 → 显示死亡遮罩 + 释放鼠标（方便看到"按 R 重来"提示）。
+## 玩家死亡 → 记录状态、显示死亡遮罩、释放鼠标（方便看到"按 R 重来"提示）。
 func _on_player_died() -> void:
+    _player_dead = true
     _hud.show_death()
     Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 

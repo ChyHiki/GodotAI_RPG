@@ -37,6 +37,11 @@ func _run() -> void:
     _expect(player.health.current_hp == 100, "玩家初始 HP=100，实际 %d" % player.health.current_hp)
     _expect(enemy.health.current_hp == 100, "敌人初始 HP=100，实际 %d" % enemy.health.current_hp)
 
+    # ---- 0) 玩家外观：应加载骑士模型（KnightModel 挂在 VisualPivot 下）----
+    var pivot = player.get_node_or_null("VisualPivot")
+    var has_knight: bool = pivot != null and pivot.has_node("KnightModel")
+    _expect(has_knight, "玩家使用外部模型 KnightModel")
+
     # ---- 1) 翻滚无敌帧：翻滚期间受伤不扣血 ----
     player._try_start_roll()
     await _wait(0.1)

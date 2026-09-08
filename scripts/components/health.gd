@@ -30,9 +30,9 @@ var invincible: bool = false
 
 
 func _ready() -> void:
-    # 组件进入场景树时把血回满，并广播一次初始值（让血条 UI 立刻对上）
-    current_hp = max_hp
-    changed.emit(current_hp, max_hp)
+	# 组件进入场景树时把血回满，并广播一次初始值（让血条 UI 立刻对上）
+	current_hp = max_hp
+	changed.emit(current_hp, max_hp)
 
 
 ## 造成伤害。
@@ -41,25 +41,25 @@ func _ready() -> void:
 ## 实现：先检查是否可受伤 → 扣血并钳制到 [0, max_hp] →
 ##       广播 changed → 若归零则广播 died。
 func damage(amount: int) -> bool:
-    if invincible or current_hp <= 0:
-        return false
-    current_hp = maxi(0, current_hp - amount)   # maxi：确保不为负
-    changed.emit(current_hp, max_hp)
-    if current_hp == 0:
-        died.emit()
-    return true
+	if invincible or current_hp <= 0:
+		return false
+	current_hp = maxi(0, current_hp - amount)   # maxi：确保不为负
+	changed.emit(current_hp, max_hp)
+	if current_hp == 0:
+		died.emit()
+	return true
 
 
 ## 治疗 amount 点血（不会超过 max_hp；死亡后不可复活）
 func heal(amount: int) -> void:
-    if current_hp <= 0:
-        return
-    current_hp = mini(max_hp, current_hp + amount)  # mini：确保不超过上限
-    changed.emit(current_hp, max_hp)
+	if current_hp <= 0:
+		return
+	current_hp = mini(max_hp, current_hp + amount)  # mini：确保不超过上限
+	changed.emit(current_hp, max_hp)
 
 
 ## 重置为满血并解除无敌（游戏重开/重生时调用）
 func reset() -> void:
-    current_hp = max_hp
-    invincible = false
-    changed.emit(current_hp, max_hp)
+	current_hp = max_hp
+	invincible = false
+	changed.emit(current_hp, max_hp)
