@@ -33,6 +33,10 @@ class_name ThirdPersonCamera
 @export var max_pitch: float = 1.05
 ## 鼠标灵敏度（乘相对位移换算为弧度）
 @export var mouse_sensitivity: float = 0.0032
+## 垂直视角方向是否"正向"：
+##   true  = 鼠标上移→视角向上看（主流操作习惯）
+##   false = 鼠标上移→视角向下看（反转型）
+@export var look_invert_y: bool = true
 ## 跟随平滑速度：越大贴得越紧，越小越"飘"
 @export var follow_speed: float = 10.0
 
@@ -91,8 +95,13 @@ func _input(event: InputEvent) -> void:
     if Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
         return
     if event is InputEventMouseMotion:
-        yaw -= event.relative.x * mouse_sensitivity          # 左右 → 环绕
-        pitch -= event.relative.y * mouse_sensitivity * 0.55 # 上下 → 俯仰(0.55=垂直减速)
+        yaw -= event.relative.x * mouse_sensitivity          # 左右 → 环绕(符合直觉)
+        # 上下 → 俯仰。注意 InputEventMouseMotion.relative.y 的正方向是"向下"，
+        # 而主流习惯是"鼠标上移 = 向上看"。pitch 越大相机越高、看得越低，
+        # 因此鼠标上移(relative.y<0)要减小 pitch → 系数取 +1(look_invert_y)。
+        # 想要"鼠标上移=往下看"的反向手感，把编辑器里的 look_invert_y 关掉即可。
+        var y_dir := 1.0 if look_invert_y else -1.0
+        pitch += y_dir * event.relative.y * mouse_sensitivity * 0.55
         pitch = clampf(pitch, min_pitch, max_pitch)          # 防止翻转
 
 
