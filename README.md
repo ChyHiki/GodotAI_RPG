@@ -62,9 +62,17 @@ docs/GAME_DESIGN.md       # 设计文档与后续方向
 - 输入动作用代码注册（Input Map 面板不可见），M2 迁移为正式项目配置以支持改键
 - 无音效 / 打击特效 / 锁定 / 连击——属于 M2 打磨内容
 
-## 验证方式（命令行冒烟测试）
+## 验证方式（命令行）
+
+冒烟测试（加载主场景跑 240 帧）：
 
 ```powershell
 & 'D:\Godot_v4.7.2-stable_win64.exe\Godot_v4.7.2-stable_win64_console.exe' --headless --path D:\GodotProject\first-game --quit-after 240
 # exit=0 且无 SCRIPT ERROR 即通过
+```
+
+战斗闭环自动化测试（翻滚无敌/敌我互伤/击杀重生/死亡遮罩，exit=0 即全过）：
+
+```powershell
+& 'D:\Godot_v4.7.2-stable_win64.exe\Godot_v4.7.2-stable_win64_console.exe' --headless --path D:\GodotProject\first-game 'res://tools/autotest/m1_autotest.tscn'
 ```
