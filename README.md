@@ -2,6 +2,8 @@
 
 用 Godot 4.7 开发的第三人称动作游戏。当前为 **M1 可玩垂直切片**：移动/翻滚/近战攻击手感验证阶段，全部美术为引擎原语占位。
 
+运行效果预览：`docs/preview_m1.png`（蓝色小机器人=玩家，红色壮汉=敌人，屏幕中央小白点=准星）
+
 ## 环境
 
 - Godot **4.7.2 stable**：`D:\Godot_v4.7.2-stable_win64.exe\Godot_v4.7.2-stable_win64.exe`
