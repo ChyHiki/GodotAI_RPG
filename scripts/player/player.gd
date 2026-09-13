@@ -11,13 +11,16 @@ class_name PlayerCharacter
 ##     - 受击/死亡：被打会硬直+击退+闪白；血空倒地死亡
 ##
 ## 【外观两种形态】
-##   1) 外部模型（默认）：加载 artifacts/models/player_knight/player_knight_roll.glb，
+##   1) 外部模型（默认）：加载 assets/characters/player_knight/player_knight.glb，
 ##      自动测量模型高度缩放到 1.8m 并落到脚底 y=0。
-##      该 GLB 内含节点动画 RollLeap（跃起前滚翻：RollPivot 转 360°、向前 1m、
-##      手臂前收约 86°、双腿收约 25°）。翻滚时会自动播放它，
-##      并按其时长换算播放倍速以对齐 roll_time。
-##      其余状态没有动画资源，仍由本脚本做"整体姿态"（奔跑起伏/攻击前倾/
-##      受击后仰/死亡倒地）与受击闪光；若模型完全没有动画则退回兜底前滚翻。
+##      该 GLB 是"带 21 根骨骼的绑定模型"，内含 5 段骨骼动画（按名字自动识别）：
+##        Walk       1.00s  循环  行走（原地，位移由本脚本负责）
+##        RollLeap   0.417s 单次  跃起前滚翻（原地翻一圈，不含前移）
+##        Slash      0.50s  单次  举剑过顶→前下劈（0.13~0.30s 为剑刃最快段）
+##        JumpStart  0.333s 单次  蹲身→蹬地→踮脚离地（起跳瞬间播）
+##        JumpAir    0.50s  循环  空中收腿+展臂平衡（离地后循环播）
+##      识别到的动画会在对应状态自动播放；缺失的动画仍由本脚本做"整体姿态"
+##      （奔跑起伏/攻击前倾/受击后仰/死亡倒地）与受击闪光兜底。
 ##   2) 原语兜底：找不到模型时用胶囊/球/方块拼装的"小蓝人"，
 ##      支持更细的肢体动画（摆腿/挥剑），逻辑保持不变。
 ##
@@ -77,16 +80,31 @@ enum State { MOVE, ROLL, ATTACK, HURT, JUMP, DEAD }
 @export var jump_buffer_time: float = 0.15        # 跳跃缓冲：落地前提前按跳跃也算数(秒)
 @export var land_squash_time: float = 0.18        # 落地压缩(视觉)持续时间(秒)
 
+## —— 行走动画对齐 ——
+## Walk 动画的"自然前进速度"(米/秒) = 一个周期的步幅 ÷ 周期时长。
+## 本模型 Walk：0.5m × 2 步 ÷ 1.0s ≈ 1.0 m/s。
+## 播放倍速 = 当前移动速度 ÷ 这个值（这样脚步与地面基本同步、不打滑）。
+@export var walk_natural_speed: float = 1.0
+## 行走动画的播放倍速上限。move_speed(6.2) 远高于自然步速(1.0)，
+## 不设上限腿会快成"电风扇"；设上限的代价是跑动时仍有轻微滑步。
+## 想彻底消除滑步，需要美术侧再出一段 Run（步幅更大的循环动画）。
+@export var walk_max_speed_scale: float = 2.0
+
 ## 重力加速度(米/秒²)。动作游戏常用比现实重力略大，手感更"沉"
 const GRAVITY := 24.0
 
 
 # ------------------------------------------------------------------
 # 玩家模型（可选）。要换角色模型时，替换这里的路径即可
+# 模型资产按类型分类存放：assets/characters/player_knight/
+#   ├─ player_knight.glb   （模型+骨骼+5 段动画）
+#   ├─ animations/         （从 GLB 抽出的独立动画 .tres，由 tools/split_player_animations.gd 生成）
+#   └─ previews/           （各动画代表帧，仅供参考）
+# 源文件（.blend）在 E:\blender\blenderproject\player_knight\，不在 Godot 项目内
 # ------------------------------------------------------------------
 
-## 玩家外观模型（.glb/.tscn 均可）。带节点动画的模型会自动播放其中的翻滚动画。
-const PLAYER_MODEL := preload("res://artifacts/models/player_knight/player_knight_roll.glb")
+## 玩家外观模型（.glb/.tscn 均可）。带骨骼动画的模型会自动识别并播放其中的动作。
+const PLAYER_MODEL := preload("res://assets/characters/player_knight/player_knight.glb")
 ## 模型应缩放到的"站高"(米)。碰撞胶囊高 1.8，默认让模型与之匹配
 const MODEL_TARGET_HEIGHT := 1.8
 
@@ -103,6 +121,16 @@ var _roll_pivot: Node3D = null
 ## 该节点的静止姿势（翻滚结束时用它把模型复位，见 _end_roll）
 var _roll_pivot_rest_pos: Vector3 = Vector3.ZERO
 var _roll_pivot_rest_rot: Vector3 = Vector3.ZERO
+## 其余识别到的骨骼动画名（空字符串 = 该动作没有动画资源，走脚本姿态兜底）
+var _walk_anim: String = ""
+var _slash_anim: String = ""
+var _jump_start_anim: String = ""
+var _jump_air_anim: String = ""
+## 起跳段时长(秒)：起跳动画播完（或已离地超过这段时间）就切到滞空循环动画
+var _jump_start_dur: float = 0.0
+## 模型的骨骼节点：用于"没有动画时"把骨骼复位成绑定姿势（见 _anim_to_rest）。
+## 为什么需要：骨骼动画一停播，骨骼会冻在停播那一帧的姿势上。
+var _skeleton: Skeleton3D = null
 
 
 # ------------------------------------------------------------------
@@ -235,6 +263,16 @@ func _try_start_attack() -> void:
 		_face_instant(aim)           # 瞬间转身(攻击要跟手，不能慢慢转)
 		_facing_dir = aim
 	_set_hitbox_active(false)
+	# 挥砍动画：按"动画时长 ÷ attack_total"换算播放倍速，让收招与状态切换对齐
+	# （本模型 Slash 0.5s、attack_total 0.5s → 倍速 1.0；判定窗 0.13~0.30s 正好是剑刃最快段）
+	if _anim_player != null and _slash_anim != "":
+		var a := _anim_player.get_animation(_slash_anim)
+		var spd := 1.0
+		if a != null and a.length > 0.01:
+			spd = a.length / maxf(0.05, attack_total)
+		_anim_player.speed_scale = 1.0
+		_anim_player.stop()
+		_anim_player.play(_slash_anim, -1.0, spd)
 
 
 ## 尝试开始翻滚（只有站立状态允许）。
@@ -278,6 +316,17 @@ func _try_start_jump() -> void:
 	_jump_buffer = 0.0
 	state = State.JUMP
 	_state_time = 0.0
+	# 起跳动画：按"上升到最高点所需时间"换算播放倍速，让蹬地动作与起跳初速度对齐
+	if _anim_player != null and _jump_start_anim != "":
+		var rise := maxf(0.08, jump_velocity / GRAVITY)   # 7.4/24 ≈ 0.31s
+		var a := _anim_player.get_animation(_jump_start_anim)
+		var spd := 1.0
+		if a != null and a.length > 0.01:
+			spd = a.length / rise
+		_jump_start_dur = rise
+		_anim_player.speed_scale = 1.0
+		_anim_player.stop()
+		_anim_player.play(_jump_start_anim, -1.0, spd)
 
 
 ## 状态超时检测：每个状态是否该结束/切换（被 _physics_process 每帧调用）。
@@ -305,11 +354,15 @@ func _update_state(_delta: float) -> void:
 				state = State.MOVE
 				_state_time = 0.0
 		State.JUMP:
-			# 落地判定：踩到地面且竖直速度已非上升 → 回移动状态 + 触发落地压缩(视觉)
+			# 落地判定：踩到地面且竖直速度已非上升 → 回移动状态 + 落地压缩 + 收掉跳跃动画。
+			# 注意：必须在这里(状态切换的瞬间)收动画，不能在动画分支里按 is_on_floor()
+			# 判断——起跳的头一两帧角色还站在地上，那样会把 JumpStart 掐断。
 			if is_on_floor() and velocity.y <= 0.01:
 				state = State.MOVE
 				_state_time = 0.0
 				_squash = land_squash_time
+				if _anim_player != null and _anim_player.is_playing():
+					_anim_to_rest()
 		State.DEAD:
 			pass                                  # 死亡状态保持，等主场景重开
 
@@ -327,9 +380,12 @@ func _end_roll() -> void:
 		var dist := offset.dot(fwd)          # 动画位移在"面朝方向"上的投影
 		if dist > 0.05:
 			move_and_collide(fwd * dist)
-		_anim_player.stop()
 		_roll_pivot.position = _roll_pivot_rest_pos
 		_roll_pivot.rotation = _roll_pivot_rest_rot
+	# 停掉翻滚动画并复位骨骼：骨骼版 RollLeap 的末帧就是站立姿势（转满 360°、无净前移），
+	# 所以在这里收掉不会跳变；不收的话下一段动作会从它停下的位置混进来。
+	if _anim_player != null and _roll_anim != "":
+		_anim_to_rest()
 	state = State.MOVE
 	_state_time = 0.0
 	_attack_cooldown = maxf(_attack_cooldown, 0.15)
@@ -619,22 +675,77 @@ func _collect_meshes(node: Node3D, parent_xform: Transform3D, out: Array) -> voi
 			_collect_meshes(child as Node3D, xform, out)
 
 
-## 扫描模型自带的动画资源：找到 AnimationPlayer，并识别"翻滚"动画。
-## 识别规则：动画名(小写)包含 "roll" 即视为翻滚动画（例如 RollLeap）。
-## 同时算出播放倍速，让动画时长正好等于游戏里的 roll_time：
-##   倍速 = 动画时长 / roll_time   （动画 0.458s、roll_time 0.42s → 约 1.09 倍）
+## 扫描模型自带的动画资源：找到 AnimationPlayer，并按名字识别 5 段动作。
+## 识别规则（大小写无关、忽略下划线）：
+##   含 roll            → 翻滚（RollLeap），并计算播放倍速让动画铺满 roll_time
+##   含 walk            → 行走（循环）
+##   含 slash / attack  → 挥砍
+##   含 jumpstart/jumpup→ 起跳
+##   含 jumpair/air/fall→ 滞空（循环）
+## 没识别到的动作，脚本会用"整体姿态"兜底（见 _animate_model）。
 func _setup_animations(model: Node3D) -> void:
 	_anim_player = _find_animation_player(model)
 	if _anim_player == null:
 		return
+	_skeleton = _find_skeleton(model)      # 蒙皮骨骼（复位姿势时要用）
 	for anim_name in _anim_player.get_animation_list():
-		if String(anim_name).to_lower().contains("roll"):
+		var key := String(anim_name).to_lower().replace("_", "")
+		if key.contains("roll"):
 			_roll_anim = String(anim_name)
 			var a := _anim_player.get_animation(anim_name)
 			if a != null and a.length > 0.01:
 				_roll_anim_speed = a.length / maxf(0.05, roll_time)
 			_setup_roll_root_motion(model, a)
-			break
+		elif key.contains("walk"):
+			_walk_anim = String(anim_name)
+			_set_loop(_walk_anim)
+		elif key.contains("slash") or key.contains("attack"):
+			_slash_anim = String(anim_name)
+		elif key.contains("jumpstart") or key.contains("jumpup"):
+			_jump_start_anim = String(anim_name)
+		elif key.contains("jumpair") or key.contains("air") or key.contains("fall"):
+			_jump_air_anim = String(anim_name)
+			_set_loop(_jump_air_anim)
+
+
+## 给"循环类"动画打开循环播放。
+## 为什么需要：glTF 本身没有循环标记，导入后的 Animation 默认 LOOP_NONE，
+## 不打开的话行走/滞空只会播一次就定住。
+func _set_loop(anim_name: String) -> void:
+	var a := _anim_player.get_animation(anim_name)
+	if a != null and a.loop_mode == Animation.LOOP_NONE:
+		a.loop_mode = Animation.LOOP_LINEAR
+
+
+## 递归查找模型里的 Skeleton3D（蒙皮网格的骨骼）。
+func _find_skeleton(node: Node) -> Skeleton3D:
+	if node is Skeleton3D:
+		return node as Skeleton3D
+	for child in node.get_children():
+		var found := _find_skeleton(child)
+		if found != null:
+			return found
+	return null
+
+
+## 停掉当前动画，并把所有骨骼复位到"绑定姿势"(rest pose)。
+## 【为什么必须做】骨骼动画一旦停播，骨骼会**冻结在停播那一帧的姿势**：
+##   - 走到一半停下 → 僵在迈步中途（双腿分开）
+##   - 落地时收掉 JumpAir → 僵在蜷腿姿势
+##   - 受击/死亡时 → 还保留着上一段动作的姿势
+## 模型目前没有 Idle / 受击 / 死亡动画，所以这些情况统一复位到 rest pose，
+## 再由脚本叠加整体姿态（后仰、倒地、落地压缩等）。
+func _anim_to_rest() -> void:
+	if _anim_player != null and _anim_player.is_playing():
+		_anim_player.stop()
+		_anim_player.speed_scale = 1.0
+	if _skeleton == null:
+		return
+	for i in _skeleton.get_bone_count():
+		var rest: Transform3D = _skeleton.get_bone_rest(i)
+		_skeleton.set_bone_pose_position(i, rest.origin)
+		_skeleton.set_bone_pose_rotation(i, rest.basis.get_rotation_quaternion())
+		_skeleton.set_bone_pose_scale(i, rest.basis.get_scale())
 
 
 ## 找出翻滚动画里被"位置轨道"驱动的节点（本模型是 EMT-KnightRoot/EMT-RollPivot），
@@ -925,23 +1036,37 @@ func _animate_robot(delta: float) -> void:
 			_pivot.position.y = lerpf(_pivot.position.y, 0.08, 1.0 - exp(-6.0 * delta))
 
 
-## 骑士模型的整体姿态动画。
-## 该模型没有骨骼，无法摆单个肢体，因此用"整身姿态"表达动作：
-##   跑动 = 上下起伏 + 前倾；翻滚 = 整身前滚翻；攻击 = 前倾突刺；受击 = 后仰。
+## 骑士模型的姿态动画。
+## 优先用模型自带的骨骼动画（Walk/RollLeap/Slash/JumpStart/JumpAir）；
+## 没有对应动画的动作，才退回"整体姿态"（起伏/前倾/后仰/倒地）。
 func _animate_model(delta: float) -> void:
 	match state:
 		State.MOVE:
-			var spd := Vector2(velocity.x, velocity.z).length()
-			var moving := spd > 0.5
-			var t := clampf(spd / move_speed, 0.0, 1.0)
-			# 跑步起伏
-			var bob := sin(_bob_phase * 2.0) * 0.04 * t
-			_pivot.position.y = bob
-			# 跑步前倾(rotation.x 转负 = 顶部朝前压)；静止回正
-			var lean := -0.12 * t
-			_pivot.rotation.x = lerp_angle(_pivot.rotation.x, lean, 1.0 - exp(-8.0 * delta))
+			if _anim_player != null and _walk_anim != "":
+				# 有行走动画（原地循环）：按"当前速度 ÷ 自然步速"调播放倍速，
+				# 站住就复位骨骼（模型没有待机动画，用绑定姿势当待机）。
+				var spd := Vector2(velocity.x, velocity.z).length()
+				if spd > 0.5:
+					var want := clampf(spd / maxf(0.2, walk_natural_speed), 0.5, walk_max_speed_scale)
+					if _anim_player.current_animation != _walk_anim:
+						_anim_player.stop()
+						_anim_player.play(_walk_anim, -1.0, want)
+					else:
+						_anim_player.speed_scale = want
+				elif _anim_player.is_playing():
+					_anim_to_rest()      # 停下：收掉行走动画并复位骨骼(否则僵在迈步中途)
+				# 骨骼动画已经在动，整体节点不要再叠加起伏/前倾（会与动画打架）
+				_pivot.position.y = lerpf(_pivot.position.y, 0.0, 1.0 - exp(-10.0 * delta))
+				_pivot.rotation.x = lerp_angle(_pivot.rotation.x, 0.0, 1.0 - exp(-10.0 * delta))
+			else:
+				var spd_f := Vector2(velocity.x, velocity.z).length()
+				var t := clampf(spd_f / move_speed, 0.0, 1.0)
+				# 跑步起伏
+				_pivot.position.y = sin(_bob_phase * 2.0) * 0.04 * t
+				# 跑步前倾(rotation.x 转负 = 顶部朝前压)；静止回正
+				_pivot.rotation.x = lerp_angle(_pivot.rotation.x, -0.12 * t, 1.0 - exp(-8.0 * delta))
 		State.ROLL:
-			# 模型自带翻滚动画时：翻滚完全交给动画(EMT-RollPivot 转 360° + 前跃 1m)，
+			# 模型自带翻滚动画时：翻滚完全交给动画（骨骼转 360°，原地无前移），
 			# 这里只把兜底用的整体旋转缓慢归零，避免两者叠加成"转两圈"。
 			if _roll_anim != "":
 				_pivot.rotation.x = lerp_angle(_pivot.rotation.x, 0.0, 1.0 - exp(-20.0 * delta))
@@ -952,32 +1077,52 @@ func _animate_model(delta: float) -> void:
 				_pivot.rotation.x = -TAU * p
 				_pivot.position.y = 0.0
 		State.ATTACK:
-			# 整体突刺表达挥砍：起手稍后仰 → 判定帧前倾刺出 → 收招回正
+			# 命中盒时间窗与"有没有动画"无关，每帧都要更新（判定帧 0.13~0.30s）
 			var windup := attack_active_start
-			var slash := attack_active_end
-			if _state_time < windup:
-				var k := _state_time / windup
-				_pivot.rotation.x = lerp_angle(_pivot.rotation.x, 0.18, k * k)   # 后仰蓄力
-			elif _state_time < slash:
-				var k := (_state_time - windup) / (slash - windup)
-				_set_hitbox_active(true)
-				_pivot.rotation.x = lerp_angle(_pivot.rotation.x, -0.5, sqrt(k))  # 前倾突刺
+			var slash_end := attack_active_end
+			_set_hitbox_active(_state_time >= windup and _state_time < slash_end)
+			if _anim_player != null and _slash_anim != "":
+				# 有挥砍动画：姿态交给动画，只把兜底用的整体前倾归零
+				_pivot.rotation.x = lerp_angle(_pivot.rotation.x, 0.0, 1.0 - exp(-12.0 * delta))
 			else:
-				_set_hitbox_active(false)
-				var k := (_state_time - slash) / maxf(0.01, attack_total - slash)
-				_pivot.rotation.x = lerp_angle(_pivot.rotation.x, 0.0, k * k)     # 回正
+				# 兜底：整体突刺表达挥砍（起手后仰 → 判定帧前倾刺出 → 收招回正）
+				if _state_time < windup:
+					var k := _state_time / windup
+					_pivot.rotation.x = lerp_angle(_pivot.rotation.x, 0.18, k * k)
+				elif _state_time < slash_end:
+					var k := (_state_time - windup) / (slash_end - windup)
+					_pivot.rotation.x = lerp_angle(_pivot.rotation.x, -0.5, sqrt(k))
+				else:
+					var k := (_state_time - slash_end) / maxf(0.01, attack_total - slash_end)
+					_pivot.rotation.x = lerp_angle(_pivot.rotation.x, 0.0, k * k)
 			_pivot.position.y = 0.0
 		State.JUMP:
-			# 骑士模型(无跳跃动画)：用整体姿态表达——
-			#   上升阶段身体前收(像蜷腿起跳)，下落阶段微微后仰准备着地
-			var lean := -0.20 if velocity.y > 0.0 else 0.12
-			_pivot.rotation.x = lerp_angle(_pivot.rotation.x, lean, 1.0 - exp(-9.0 * delta))
-			_pivot.position.y = 0.0
+			if _anim_player != null and (_jump_start_anim != "" or _jump_air_anim != ""):
+				# 起跳段播 JumpStart；起跳段结束后（或本来就是走下平台，_jump_start_dur=0）
+				# 切到 JumpAir 循环。收动画由状态机在"真正落地"时处理（见 _update_state）。
+				var in_start := _jump_start_anim != "" and _state_time < _jump_start_dur \
+						and _anim_player.current_animation == _jump_start_anim
+				if not in_start and _jump_air_anim != "" \
+						and _anim_player.current_animation != _jump_air_anim:
+					_anim_player.speed_scale = 1.0
+					_anim_player.play(_jump_air_anim, -1.0, 1.0)
+				# 有跳跃动画时不再叠加整体前倾/后仰
+				_pivot.rotation.x = lerp_angle(_pivot.rotation.x, 0.0, 1.0 - exp(-10.0 * delta))
+				_pivot.position.y = 0.0
+			else:
+				# 兜底(无跳跃动画)：上升身体前收、下落微后仰准备着地
+				var lean := -0.20 if velocity.y > 0.0 else 0.12
+				_pivot.rotation.x = lerp_angle(_pivot.rotation.x, lean, 1.0 - exp(-9.0 * delta))
+				_pivot.position.y = 0.0
 		State.HURT:
-			# 受击后仰
+			# 受击后仰（模型没有受击动画 → 先收掉其它动画并复位骨骼，再叠加后仰）
+			if _anim_player != null and _anim_player.is_playing():
+				_anim_to_rest()
 			_pivot.rotation.x = lerp_angle(_pivot.rotation.x, 0.35, 1.0 - exp(-10.0 * delta))
 			_pivot.position.y = 0.0
 		State.DEAD:
-			# 死亡前栽
+			# 死亡前栽（模型没有死亡动画 → 先复位骨骼，再整体倒下）
+			if _anim_player != null and _anim_player.is_playing():
+				_anim_to_rest()
 			_pivot.rotation.x = -PI / 2.0 * clampf(_state_time / 0.55, 0.0, 1.0)
 			_pivot.position.y = lerpf(_pivot.position.y, 0.08, 1.0 - exp(-6.0 * delta))

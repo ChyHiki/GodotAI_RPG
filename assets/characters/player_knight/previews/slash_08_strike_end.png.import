@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://b0mxh01it40au"
-path="res://.godot/imported/preview_blockout_iso.png-8f7d99353e2f5c04676f878d06e91b46.ctex"
+uid="uid://onuh61kcrop"
+path="res://.godot/imported/slash_08_strike_end.png-9fac90dd00cbdc33cd24260c7c7d980b.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://artifacts/models/player_knight/preview_blockout_iso.png"
-dest_files=["res://.godot/imported/preview_blockout_iso.png-8f7d99353e2f5c04676f878d06e91b46.ctex"]
+source_file="res://assets/characters/player_knight/previews/slash_08_strike_end.png"
+dest_files=["res://.godot/imported/slash_08_strike_end.png-9fac90dd00cbdc33cd24260c7c7d980b.ctex"]
 
 [params]
 

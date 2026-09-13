@@ -41,10 +41,21 @@ func _run() -> void:
     var pivot = player.get_node_or_null("VisualPivot")
     var has_knight: bool = pivot != null and pivot.has_node("KnightModel")
     _expect(has_knight, "玩家使用外部模型 KnightModel")
-    # 模型内含 RollLeap 翻滚动画，应被自动识别到
+    # 模型是骨骼版，含 5 段动画，应被自动识别（名字大小写/下划线无关）
     _expect(player._anim_player != null, "模型含 AnimationPlayer")
-    _expect(player._roll_anim != "", "已识别翻滚动画: %s" % player._roll_anim)
+    _expect(player._skeleton != null, "模型含 Skeleton3D")
+    if player._skeleton != null:
+        _expect(player._skeleton.get_bone_count() >= 15,
+            "骨骼数量正常(%d 根)" % player._skeleton.get_bone_count())
+    _expect(player._roll_anim == "RollLeap", "识别翻滚动画: %s" % player._roll_anim)
+    _expect(player._walk_anim == "Walk", "识别行走动画: %s" % player._walk_anim)
+    _expect(player._slash_anim == "Slash", "识别挥砍动画: %s" % player._slash_anim)
+    _expect(player._jump_start_anim == "JumpStart", "识别起跳动画: %s" % player._jump_start_anim)
+    _expect(player._jump_air_anim == "JumpAir", "识别滞空动画: %s" % player._jump_air_anim)
     _expect(player._roll_anim_speed > 0.1, "翻滚动画倍速有效: %.3f" % player._roll_anim_speed)
+    # 循环类动画必须开循环，否则只播一次就定住
+    _expect(_loop_ok(player, "Walk"), "Walk 已设为循环播放")
+    _expect(_loop_ok(player, "JumpAir"), "JumpAir 已设为循环播放")
     # 模型应被自动缩放到约 1.8m 站高、脚底贴地（换模型时的回归保护）
     if pivot != null and pivot.has_node("KnightModel"):
         var model = pivot.get_node("KnightModel")
@@ -63,55 +74,81 @@ func _run() -> void:
         _expect(absf(height - 1.8) < 0.35, "模型站高被缩放到 1.8m 附近，实际 %.3f" % height)
         _expect(absf(mn.y) < 0.12, "模型脚底贴地(y≈0)，实际 %.3f" % mn.y)
 
-    # ---- 1) 翻滚无敌帧 + 翻滚动画是否真的驱动了模型节点 ----
-    var roll_pivot: Node3D = player._roll_pivot
-    if roll_pivot == null:
-        roll_pivot = _find_by_name(player, "EMT-RollPivot") as Node3D
-    _expect(roll_pivot != null, "模型含动画节点 EMT-RollPivot")
+    # ---- 1) 翻滚：无敌帧 + 播放 RollLeap + 结束复位骨骼 ----
     var pos_before: Vector3 = player.global_position
     player._try_start_roll()
     await _wait(0.1)
+    _expect(player._anim_player.current_animation == player._roll_anim,
+        "翻滚时播放 %s(实际 %s)" % [player._roll_anim, player._anim_player.current_animation])
     player.take_damage(15, player.global_position + Vector3(0, 0, 1))
     _expect(player.health.current_hp == 100, "[翻滚无敌] 翻滚期间扣血了: %d" % player.health.current_hp)
-    # 翻滚中段：动画节点应已明显旋转/前移(证明 GLB 动画在播放，而不是静止姿势)
-    await _wait(0.12)   # 累计约 0.22s，接近翻滚中段
-    if roll_pivot != null:
-        var mid_rot: float = absf(roll_pivot.rotation.x)
-        var mid_z: float = absf(roll_pivot.position.z)
-        _expect(mid_rot > 0.8 or mid_z > 0.25,
-            "翻滚中段模型已翻滚(rot.x=%.2f, z=%.2f)" % [mid_rot, mid_z])
-    await _wait(0.4)    # 等整段翻滚播完(roll_time=0.42s)
-    # 翻滚结束：动画独有的"前跃 1m"根位移应已过继给本体 → 模型复位站姿 + 角色实际前移
-    if roll_pivot != null:
-        _expect(absf(roll_pivot.rotation.x) < 0.25 and absf(roll_pivot.position.z) < 0.08,
-            "翻滚结束模型复位站姿(rot.x=%.2f, z=%.2f)" % [absf(roll_pivot.rotation.x), absf(roll_pivot.position.z)])
+    await _wait(0.5)          # 等整段翻滚播完(roll_time=0.42s)
+    _expect(not player._anim_player.is_playing(), "翻滚结束后动画已停止")
+    _expect(_bones_at_rest(player), "翻滚结束后骨骼复位到绑定姿势")
     var moved: float = Vector2(player.global_position.x - pos_before.x,
         player.global_position.z - pos_before.z).length()
-    _expect(moved > 1.3, "翻滚位移含动画根位移(期望 >1.3m)，实际 %.2fm" % moved)
+    _expect(moved > 0.9, "翻滚有实际位移(%.2fm)" % moved)
 
-    # ---- 1c) 跳跃：按住跳得高 / 空中不能二段跳 / 落地恢复 / 轻点跳得矮 ----
+    # ---- 1b) 行走动画：移动时播放并按速度调倍速；停下复位骨骼 ----
+    Input.action_press("move_forward")
+    await _wait(0.4)
+    _expect(player._anim_player.current_animation == player._walk_anim,
+        "移动时播放行走动画(实际 %s)" % player._anim_player.current_animation)
+    _expect(player._anim_player.speed_scale > 0.6,
+        "行走动画倍速随速度调整(%.2f)" % player._anim_player.speed_scale)
+    Input.action_release("move_forward")
+    await _wait(0.5)
+    _expect(not player._anim_player.is_playing(), "停下后行走动画已停止")
+    _expect(_bones_at_rest(player), "停下后骨骼复位到绑定姿势")
+
+    # ---- 1c) 挥砍动画：攻击播放 Slash，结束复位 ----
+    _face_player_to(player, Vector3(0, 0, -1))
+    player._try_start_attack()
+    await _wait(0.1)
+    _expect(player._anim_player.current_animation == player._slash_anim,
+        "攻击时播放 %s(实际 %s)" % [player._slash_anim, player._anim_player.current_animation])
+    await _wait(0.75)
+    _expect(not player._anim_player.is_playing(), "攻击结束后动画已停止")
+    _expect(_bones_at_rest(player), "攻击结束后骨骼复位")
+
+    # ---- 1d) 跳跃：JumpStart → JumpAir → 落地复位；按住跳高、无二段跳、轻点跳矮 ----
     var gy_before: float = player.global_position.y
     Input.action_press("jump")                       # 模拟"按住跳跃键"
     player._try_start_jump()
     await _wait(0.06)
+    _expect(player._anim_player.current_animation == player._jump_start_anim,
+        "起跳播放 %s(实际 %s)" % [player._jump_start_anim, player._anim_player.current_animation])
     _expect(player.global_position.y > gy_before + 0.05,
         "起跳后升空(%.2f → %.2f)" % [gy_before, player.global_position.y])
-    var vy_before: float = player.velocity.y
-    player._try_start_jump()                         # 空中再按 → 不应生效(无二段跳)
-    await _wait(0.02)
-    _expect(player.velocity.y <= vy_before + 0.01,
-        "空中不能二段跳(vy %.2f → %.2f)" % [vy_before, player.velocity.y])
+
+    # 一次性采样整段腾空过程，同时验证三件事：
+    #   ① 最高点(用于"按住跳得高"和"轻点跳得矮"的对比)
+    #   ② 是否切到了滞空循环动画 JumpAir
+    #   ③ 空中再按跳跃无效(无二段跳)
     var full_peak: float = player.global_position.y
-    for i in 40:                                     # 采样约 0.8s 取最高点
+    var saw_air_anim := false
+    var double_jump_blocked := true
+    for i in 45:                                     # 约 0.9s，覆盖整段跳跃
         await _wait(0.02)
         full_peak = maxf(full_peak, player.global_position.y)
+        if player._anim_player.current_animation == player._jump_air_anim:
+            saw_air_anim = true
+        if i == 20:                                  # 约 0.5s：已过起跳段且仍在空中
+            var vy_before: float = player.velocity.y
+            player._try_start_jump()                 # 空中再按 → 不应生效
+            await _wait(0.02)
+            double_jump_blocked = player.velocity.y <= vy_before + 0.01
     Input.action_release("jump")
+    _expect(saw_air_anim, "滞空阶段播放 %s" % player._jump_air_anim)
+    _expect(double_jump_blocked, "空中不能二段跳")
     var full_h: float = full_peak - gy_before
     _expect(full_h > 0.9 and full_h < 1.6, "按住跳跃的高度约 1.1m，实际 %.2fm" % full_h)
-    await _wait(0.6)                                 # 等落地
+    await _wait(0.7)                                 # 等落地
     _expect(player.is_on_floor(), "跳跃后已落地")
     _expect(absf(player.global_position.y - gy_before) < 0.15,
         "落地后回到地面高度(%.2f)" % player.global_position.y)
+    _expect(not player._anim_player.is_playing(), "落地后跳跃动画已停止")
+    _expect(_bones_at_rest(player), "落地后骨骼复位到绑定姿势")
 
     # 轻点跳跃(不按住) → 可变跳跃高度应该明显更低
     var hop_base: float = player.global_position.y
@@ -199,6 +236,31 @@ func _find_by_name(root: Node, target: String) -> Node:
         if found != null:
             return found
     return null
+
+
+## 检查某段动画是否已设为循环播放（Walk / JumpAir 必须是循环）。
+func _loop_ok(player, anim_name: String) -> bool:
+    if player._anim_player == null:
+        return false
+    var a: Animation = player._anim_player.get_animation(anim_name)
+    return a != null and a.loop_mode != Animation.LOOP_NONE
+
+
+## 检查所有骨骼是否都回到"绑定姿势"(rest pose)（容差内）。
+## 用于验证"停下/落地/受击后骨骼没有僵在动画中途的姿势"。
+func _bones_at_rest(player) -> bool:
+    var skel = player._skeleton
+    if skel == null:
+        return false
+    for i in skel.get_bone_count():
+        var rest: Transform3D = skel.get_bone_rest(i)
+        var q_rest: Quaternion = rest.basis.get_rotation_quaternion()
+        var q_pose: Quaternion = skel.get_bone_pose_rotation(i)
+        if absf(q_pose.angle_to(q_rest)) > 0.08:
+            return false
+        if skel.get_bone_pose_position(i).distance_to(rest.origin) > 0.02:
+            return false
+    return true
 
 
 func _expect(cond: bool, msg: String) -> void:

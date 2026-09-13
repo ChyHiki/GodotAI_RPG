@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://bc0qglhiy877m"
-path="res://.godot/imported/preview_iso.png-9ec8348362932785fbd138b8541d2141.ctex"
+uid="uid://cl03so1nsb6i0"
+path="res://.godot/imported/jumpstart_09_liftoff.png-964aa48437f498f84a4ca99b80c5961c.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://artifacts/models/player_knight/preview_iso.png"
-dest_files=["res://.godot/imported/preview_iso.png-9ec8348362932785fbd138b8541d2141.ctex"]
+source_file="res://assets/characters/player_knight/previews/jumpstart_09_liftoff.png"
+dest_files=["res://.godot/imported/jumpstart_09_liftoff.png-964aa48437f498f84a4ca99b80c5961c.ctex"]
 
 [params]
 

@@ -97,13 +97,26 @@ docs/GAME_DESIGN.md       # 设计文档与后续方向
 # 再分析： --headless --script res://tools/anim_diff.gd -- .tmp_anim
 ```
 
-## 玩家模型与翻滚动画
+## 玩家模型与动画
 
-- 模型：`artifacts/models/player_knight/player_knight_roll.glb`（Blender 源文件在 `E:\blender\blenderproject\player_knight\`）
-- 模型自带节点动画 **RollLeap**（0.458s）：`EMT-RollPivot` 绕 X 轴 360° 前滚翻 + 向前 1m + 双臂前收/双腿收
-- 按 Shift 翻滚时自动播放；播放倍速按"动画时长 / roll_time"换算，保证与位移、无敌帧同步
-- 动画自带的 1m 前跃是**根位移**：翻滚结束时由 `_end_roll()` 用 `move_and_collide` 过继给角色本体（撞墙会少走），同时把模型复位成站姿，避免模型永久领先碰撞体
-- 翻滚总位移 ≈ 控制器 1.2m + 动画 1.0m ≈ 2.2m（`roll_speed` 可调）
+- 模型：`assets/characters/player_knight/player_knight.glb`（**21 根骨骼的蒙皮模型**，5 段动画；Blender 源文件在 `E:\blender\blenderproject\player_knight\`）
+- 资产说明见 `assets/characters/player_knight/README.md`；独立动画资源在 `animations/*.tres`
+
+| 动画 | 时长 | 循环 | 触发时机 | 播放倍速 |
+|---|---|---|---|---|
+| `Walk` | 1.04s | ✅ | 移动中（站住即停） | 当前速度 ÷ `walk_natural_speed`，上限 `walk_max_speed_scale` |
+| `RollLeap` | 0.458s | 单次 | Shift 翻滚 | 动画时长 ÷ `roll_time` |
+| `Slash` | 0.542s | 单次 | 左键攻击（判定窗 0.13~0.30s 与剑刃最快段对齐） | 动画时长 ÷ `attack_total` |
+| `JumpStart` | 0.375s | 单次 | 起跳瞬间 | 动画时长 ÷ (起跳初速度 ÷ 重力) |
+| `JumpAir` | 0.542s | ✅ | 离地后直到落地 | 1.0 |
+
+动画状态机要点（都在 `scripts/player/player.gd`）：
+- 动画名按"小写 + 忽略下划线"匹配（`roll` / `walk` / `slash|attack` / `jumpstart|jumpup` / `jumpair|air|fall`），换模型/改动画名后无需改代码
+- **循环必须显式打开**：glTF 没有循环标记，代码会把 Walk / JumpAir 设为 `LOOP_LINEAR`，否则只播一次就定住
+- **骨骼复位**：骨骼动画一停播，骨骼会冻在停播那一帧（走到一半停下→僵在迈步中途；落地→僵在蜷腿姿势）。所以"没有对应动画"的状态（待机 / 受击 / 死亡 / 落地后）统一调用 `_anim_to_rest()` 把骨骼复位到绑定姿势，再由脚本叠加整体姿态与落地压缩
+- 起跳瞬间角色还没离地，因此"落地收动画"必须由状态机在 `JUMP → MOVE` 切换时处理，不能按 `is_on_floor()` 在动画分支里判断（会掐断 JumpStart）
+- 这套动画**不含净水平位移**（前进量由速度逻辑负责），所以翻滚不再需要"根位移过继"
+- 骨架动画目前没有 Idle / 受击 / 死亡片段：待机用绑定姿势、受击用后仰、死亡用整体倒地；补上动画后可自动接入
 
 ## 跳跃手感参数（`scripts/player/player.gd` 顶部 @export）
 
@@ -116,8 +129,16 @@ docs/GAME_DESIGN.md       # 设计文档与后续方向
 | `coyote_time` | 0.12 | 土狼时间：刚离开地面仍可起跳 |
 | `jump_buffer_time` | 0.15 | 跳跃缓冲：落地前提前按也算数 |
 | `land_squash_time` | 0.18 | 落地压缩(视觉)时长 |
+| `walk_natural_speed` | 1.0 | Walk 动画的自然步速(米/秒)，用于算播放倍速 |
+| `walk_max_speed_scale` | 2.0 | Walk 播放倍速上限（见下方"已知取舍"） |
 
 跳跃相关的设计取舍：
 - 跳跃**不能取消**攻击/翻滚，攻击/翻滚/受击硬直中按跳跃无效（动作要有承诺感）
 - 空中不能二段跳；空中也不能攻击、不能翻滚（M2 可扩展为空战）
-- 模型目前没有跳跃动画，用"整体前收/后仰 + 落地压缩"表达（Blender 补 Jump 动画后可替换）
+
+## 已知取舍（动画相关）
+
+- **滑步**：`move_speed = 6.2 m/s` 远高于 Walk 动画的自然步速（约 1.0 m/s），
+  倍速上限 2.0 意味着跑动时腿部动作与地面仍有滑步。要彻底消除需要美术侧再出一段
+  **Run**（步幅更大的循环），或把 `move_speed` 降到 3~4 更接近"重甲骑士"的感觉。
+- 没有 Idle 动画：站住时是绑定姿势（静止站姿），看起来会有点"呆"。

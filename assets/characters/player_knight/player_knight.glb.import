@@ -3,13 +3,13 @@
 importer="scene"
 importer_version=1
 type="PackedScene"
-uid="uid://cqmrndije046o"
-path="res://.godot/imported/player_knight_roll.glb-bf05d3c88800e8edecbdafaf75e0ce8b.scn"
+uid="uid://ch7cg6yw5t6xg"
+path="res://.godot/imported/player_knight.glb-c41d5049d696dff5d9431471221a776c.scn"
 
 [deps]
 
-source_file="res://artifacts/models/player_knight/player_knight_roll.glb"
-dest_files=["res://.godot/imported/player_knight_roll.glb-bf05d3c88800e8edecbdafaf75e0ce8b.scn"]
+source_file="res://assets/characters/player_knight/player_knight.glb"
+dest_files=["res://.godot/imported/player_knight.glb-c41d5049d696dff5d9431471221a776c.scn"]
 
 [params]
 
