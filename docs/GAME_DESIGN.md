@@ -36,3 +36,13 @@ UI/设置存档 / 演出 / 发布构建
 - 敌人 AI：`scripts/enemy/enemy.gd` 顶部 `@export`
 - 镜头：`scripts/camera/third_person_camera.gd` 顶部 `@export`
 在 Godot 编辑器里选中节点即可实时调整这些参数试手感。
+
+## 美术资产管线（Blender）
+
+- **建模源文件目录（唯一来源）**：`E:\blender\blenderproject\<模型名>\`
+  - 每个模型一个子目录，内含 `.blend` 源文件、`export\*.glb`、`previews\*.png` 和 `README.md`（说明每个文件用途与改法）
+  - 已有：`E:\blender\blenderproject\player_knight\` —— 玩家低模蓝甲骑士（静态模型 + `RollLeap` 翻滚动画）
+- **Blender**：`E:\blender\blender.exe`（5.2.1 LTS）；dsh-blender 插件已配置指向该路径
+- **游戏项目内只保留引擎需要的产物**：`artifacts/models/<模型名>/*.glb` 与预览图；模型源文件不放项目里，避免两处版本不一致
+- **改模型流程**：用 Blender 打开 blenderproject 里的源文件 → 修改 → 导出 GLB（勾选 Animation）→ 覆盖 `artifacts/models/player_knight/` 下的同名 GLB → Godot 自动重新导入
+- 想让 AI 改模型时，直接说"改 `E:\blender\blenderproject\player_knight` 里的模型"即可
