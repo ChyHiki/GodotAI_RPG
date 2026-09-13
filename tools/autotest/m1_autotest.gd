@@ -56,6 +56,14 @@ func _run() -> void:
     # 循环类动画必须开循环，否则只播一次就定住
     _expect(_loop_ok(player, "Walk"), "Walk 已设为循环播放")
     _expect(_loop_ok(player, "JumpAir"), "JumpAir 已设为循环播放")
+    # 命中判定窗应与"剑刃最快段"对齐（实测 Slash 动画 0.19~0.30s 为劈砍段）
+    if player._anim_player != null and player._slash_anim != "":
+        var slash_anim: Animation = player._anim_player.get_animation(player._slash_anim)
+        var atk_spd: float = slash_anim.length / player.attack_total
+        var win0: float = player.attack_active_start * atk_spd
+        var win1: float = player.attack_active_end * atk_spd
+        _expect(win0 > 0.14 and win1 < 0.33,
+            "命中判定窗落在剑刃最快段(动画时间 %.2f~%.2fs)" % [win0, win1])
     # 模型应被自动缩放到约 1.8m 站高、脚底贴地（换模型时的回归保护）
     if pivot != null and pivot.has_node("KnightModel"):
         var model = pivot.get_node("KnightModel")
@@ -73,6 +81,36 @@ func _run() -> void:
         var height: float = mx.y - mn.y
         _expect(absf(height - 1.8) < 0.35, "模型站高被缩放到 1.8m 附近，实际 %.3f" % height)
         _expect(absf(mn.y) < 0.12, "模型脚底贴地(y≈0)，实际 %.3f" % mn.y)
+
+    # ---- 0b) 武器：独立武器应挂在 weapon.R 骨骼上，静止位置与"分离前"一致 ----
+    var socket = player._weapon_socket
+    var weapon = player._weapon
+    _expect(socket != null, "武器挂点已创建(BoneAttachment3D)")
+    _expect(weapon != null, "武器已装备")
+    if socket != null:
+        _expect(String(socket.bone_name) == "weapon.R",
+            "武器挂在骨骼 weapon.R 上(实际 %s)" % socket.bone_name)
+    if weapon != null and pivot != null and pivot.has_node("KnightModel"):
+        var wmodel = pivot.get_node("KnightModel")
+        var winv: Transform3D = wmodel.global_transform.affine_inverse()
+        var wbounds: Array = [Vector3.INF, -Vector3.INF]
+        _accumulate_bounds(weapon, winv, wbounds)
+        var wmn: Vector3 = wbounds[0]
+        var wmx: Vector3 = wbounds[1]
+        # 基准 = 武器分离前旧模型里 GEO-sword_01 的实测包围盒（模型空间）
+        var ref_mn := Vector3(0.250, 0.530, -0.015)
+        var ref_mx := Vector3(0.410, 1.720, 0.055)
+        var off: float = ((wmn + wmx) * 0.5 - (ref_mn + ref_mx) * 0.5).length()
+        _expect(off < 0.08, "武器静止位置与分离前一致(中心偏差 %.3fm)" % off)
+        _expect(wmx.y > 1.4, "刀身朝上握持(剑尖 y=%.2f)" % wmx.y)
+        # 挥砍时剑应随手臂骨骼大幅移动（证明是骨骼挂载，不是钉死在原地）
+        var rel_before: Vector3 = winv * weapon.global_position
+        player._try_start_attack()
+        await _wait(0.3)                       # 劈砍段
+        var rel_mid: Vector3 = winv * weapon.global_position
+        _expect(rel_mid.distance_to(rel_before) > 0.25,
+            "挥砍时剑跟随手臂骨骼(相对位移 %.2fm)" % rel_mid.distance_to(rel_before))
+        await _wait(0.5)                       # 等攻击结束
 
     # ---- 1) 翻滚：无敌帧 + 播放 RollLeap + 结束复位骨骼 ----
     var pos_before: Vector3 = player.global_position
@@ -236,6 +274,27 @@ func _find_by_name(root: Node, target: String) -> Node:
         if found != null:
             return found
     return null
+
+
+## 把某个节点下的所有网格包围盒换算到指定空间并求并集（用于武器位置校验）。
+func _accumulate_bounds(node: Node, inv: Transform3D, bounds: Array) -> void:
+    if node is MeshInstance3D:
+        var mi := node as MeshInstance3D
+        var aabb: AABB = mi.get_aabb()
+        var xform: Transform3D = inv * mi.global_transform
+        for i in 8:
+            var off := Vector3.ZERO
+            if (i & 1) != 0:
+                off.x = aabb.size.x
+            if (i & 2) != 0:
+                off.y = aabb.size.y
+            if (i & 4) != 0:
+                off.z = aabb.size.z
+            var p: Vector3 = xform * (aabb.position + off)
+            bounds[0] = (bounds[0] as Vector3).min(p)
+            bounds[1] = (bounds[1] as Vector3).max(p)
+    for child in node.get_children():
+        _accumulate_bounds(child, inv, bounds)
 
 
 ## 检查某段动画是否已设为循环播放（Walk / JumpAir 必须是循环）。

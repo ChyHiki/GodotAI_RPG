@@ -106,7 +106,7 @@ docs/GAME_DESIGN.md       # 设计文档与后续方向
 |---|---|---|---|---|
 | `Walk` | 1.04s | ✅ | 移动中（站住即停） | 当前速度 ÷ `walk_natural_speed`，上限 `walk_max_speed_scale` |
 | `RollLeap` | 0.458s | 单次 | Shift 翻滚 | 动画时长 ÷ `roll_time` |
-| `Slash` | 0.542s | 单次 | 左键攻击（判定窗 0.13~0.30s 与剑刃最快段对齐） | 动画时长 ÷ `attack_total` |
+| `Slash` | 0.542s | 单次 | 左键攻击（判定窗 `0.17~0.28s` = 实测剑刃最快段） | 动画时长 ÷ `attack_total` |
 | `JumpStart` | 0.375s | 单次 | 起跳瞬间 | 动画时长 ÷ (起跳初速度 ÷ 重力) |
 | `JumpAir` | 0.542s | ✅ | 离地后直到落地 | 1.0 |
 
@@ -117,6 +117,29 @@ docs/GAME_DESIGN.md       # 设计文档与后续方向
 - 起跳瞬间角色还没离地，因此"落地收动画"必须由状态机在 `JUMP → MOVE` 切换时处理，不能按 `is_on_floor()` 在动画分支里判断（会掐断 JumpStart）
 - 这套动画**不含净水平位移**（前进量由速度逻辑负责），所以翻滚不再需要"根位移过继"
 - 骨架动画目前没有 Idle / 受击 / 死亡片段：待机用绑定姿势、受击用后仰、死亡用整体倒地；补上动画后可自动接入
+
+## 武器（与角色分离）
+
+- 武器资产：`assets/weapons/sword_01/sword_01.glb`（原点 = 握把中心、**刀身沿局部 -Z**）
+- 挂载方式：`BoneAttachment3D` 挂在角色骨骼 `weapon.R` 上；换武器只需 `player.equip_weapon(场景)`，**角色模型与全部动画都不用动**
+- ⚠️ **不能单位变换直挂**：`weapon.R` 的静止基是 +Z≈模型上方、+Y≈模型前方，直挂会让刀身朝下（实测整把剑掉到 y≈-0.4、中心偏差 0.955m）
+- 代码用固定对齐变换 `WEAPON_ALIGN_MODEL`（绕 X +90° 把刀身立起 + 平移到"武器分离前"的旧握柄中心）修正，**实测中心偏差 0.034m**
+- 对齐偏移设在**武器子节点**上：`BoneAttachment3D` 自己的 transform 每帧会被引擎用骨骼姿势覆盖，设在挂点上无效
+- 回归验证：`tools/check_weapon.tscn` 打印实测包围盒并与基准对比；自动测试含 5 项武器断言（挂点骨骼 / 静止位置 / 刀身朝上 / 挥砍跟随 / 命中窗）
+
+## 命中判定窗是怎么定的
+
+`attack_active_start/end` 不是拍脑袋写的：`tools/inspect_rig.gd` 会采样 Slash 动画里
+`hand.R` / `weapon.R` 的角速度曲线，实测结果——
+
+| 动画时间 | 段 | 角速度 |
+|---|---|---|
+| 0.00–0.16s | 举剑 | ≤ 90°/s |
+| **0.18–0.30s** | **劈砍（判定窗）** | 峰值 **496°/s** @0.26s |
+| 0.32–0.54s | 收招 | ≤ 375°/s |
+
+换算到游戏时间（动画 0.542s ÷ `attack_total` 0.5s ≈ 1.083 倍速）即 **0.17~0.28s**。
+复现命令：`godot --headless --path . --script res://tools/inspect_rig.gd -- <骑士glb> Slash`
 
 ## 跳跃手感参数（`scripts/player/player.gd` 顶部 @export）
 

@@ -1,3 +1,9 @@
 # Godot 4+ specific ignores
 .godot/
 /android/
+
+# 个人练习 / 临时目录（不入库）
+TestCode/
+tmp_inspect_old/
+.tmp_cap/
+.tmp_anim/

@@ -67,8 +67,15 @@ enum State { MOVE, ROLL, ATTACK, HURT, JUMP, DEAD }
 @export var attack_damage: int = 25          # 每次挥砍伤害（敌人100血→4刀）
 @export var attack_cd: float = 0.42          # 攻击冷却：两次攻击的最小间隔
 @export var attack_total: float = 0.5        # 一次攻击总时长(起手+挥砍+收招)
-@export var attack_active_start: float = 0.13 # 攻击进行到此时"判定帧"开始(能打到人)
-@export var attack_active_end: float = 0.3   # 判定帧结束（期间命中盒开启）
+## 命中判定窗（判定帧期间攻击命中盒开启）。
+## 【数值按动画实测】采样 Slash 动画里 hand.R/weapon.R 的角速度曲线：
+##   举剑段 0~0.16s(≤90°/s) → 劈砍最快段 0.18~0.30s(峰值 496°/s @0.26s) → 收招段。
+##   换算到游戏时间（动画 0.542s ÷ attack_total 0.5s ≈ 1.083 倍速）：
+##   0.19s/1.083 ≈ 0.17、0.30s/1.083 ≈ 0.28。
+## 所以取 0.17~0.28：只有"剑刃真正划过"时才判定，避免举剑阶段就打出伤害。
+## 复现方式：godot --headless --path . --script res://tools/inspect_rig.gd -- <骑士glb> Slash
+@export var attack_active_start: float = 0.17 # 判定帧开始(游戏时间，秒)
+@export var attack_active_end: float = 0.28   # 判定帧结束(游戏时间，秒)
 @export var knockback_strength: float = 9.0  # 受击时的击退初速度
 
 ## —— 跳跃手感（数值都在编辑器里可调）——
@@ -108,6 +115,22 @@ const PLAYER_MODEL := preload("res://assets/characters/player_knight/player_knig
 ## 模型应缩放到的"站高"(米)。碰撞胶囊高 1.8，默认让模型与之匹配
 const MODEL_TARGET_HEIGHT := 1.8
 
+## 武器资产：与角色**分离**存放 —— 换武器只换这个文件，角色与全部动画都不用动。
+## 资产约定（本资产实测）：原点 = 握把中心；刀身沿局部 **-Z**（护手 z≈±0.14、刀身 z -0.145~-1.0）
+const PLAYER_WEAPON := preload("res://assets/weapons/sword_01/sword_01.glb")
+## 武器挂点骨骼名（角色模型里的空骨骼）。换手/背挂只需改这里，或再建挂点骨骼。
+const WEAPON_SOCKET := "weapon.R"
+## 挂点对齐变换（模型空间）：把武器摆成"握柄在手里、刀身朝上"。
+## 【为什么需要】挂点骨骼 weapon.R 的静止基是 +Z≈模型上方、+Y≈模型前方，
+##   而武器刀身沿自身 -Z；直接单位变换挂上去刀身会朝**下**（实测整把剑落到 y≈-0.4，插进地面）。
+## 【数值怎么来的】武器分离前的旧模型里剑是绑在 weapon.R 上的，实测网格范围
+##   握柄 y 0.530~0.785(中心 0.6575)、x 中心 0.330、z 中心 0.020；刀身朝上到 y=1.720。
+##   所以：绕 X 轴 +90°（把 -Z 刀身转成 +Y 朝上）+ 平移到旧握柄中心，
+##   即可让独立武器回到"未分离时"的位置（挥砍/行走姿态自然一致）。
+## 【怎么验证】跑 tools/check_weapon.tscn 会打印实测包围盒并与旧模型基准对比；
+##   自动测试里也有对应断言（偏差 < 8cm）。
+const WEAPON_ALIGN_MODEL := Transform3D(Basis(Vector3(1, 0, 0), PI / 2.0), Vector3(0.330, 0.6575, 0.020))
+
 ## 是否正在使用外部模型（true=用模型；false=用原语小蓝人兜底）
 var _use_model: bool = false
 ## 模型自带的动画播放器（GLB 内嵌动画时存在；静态模型则为 null）
@@ -128,6 +151,12 @@ var _jump_start_anim: String = ""
 var _jump_air_anim: String = ""
 ## 起跳段时长(秒)：起跳动画播完（或已离地超过这段时间）就切到滞空循环动画
 var _jump_start_dur: float = 0.0
+## 武器挂点（BoneAttachment3D，挂在模型的 weapon.R 骨骼上）
+var _weapon_socket: BoneAttachment3D = null
+## 当前装备的武器节点（徒手时为 null）
+var _weapon: Node3D = null
+## 武器相对挂点的对齐偏移（由 _attach_weapon 按骨骼静止姿势算出，见那里的说明）
+var _weapon_align_local: Transform3D = Transform3D.IDENTITY
 ## 模型的骨骼节点：用于"没有动画时"把骨骼复位成绑定姿势（见 _anim_to_rest）。
 ## 为什么需要：骨骼动画一停播，骨骼会冻在停播那一帧的姿势上。
 var _skeleton: Skeleton3D = null
@@ -658,8 +687,10 @@ func _setup_model() -> bool:
 			var mat := mi.get_active_material(surface)
 			if mat is StandardMaterial3D and not _mats.has(mat):
 				_mats.append(mat)
-	# 识别模型自带动画（本项目骑士模型含 RollLeap 翻滚动画）
+	# 识别模型自带动画（Walk/RollLeap/Slash/JumpStart/JumpAir）
 	_setup_animations(model)
+	# 把独立武器资产挂到骨骼挂点上（武器与角色分离 → 换武器不用改角色和动画）
+	_attach_weapon(model)
 	return true
 
 
@@ -726,6 +757,57 @@ func _find_skeleton(node: Node) -> Skeleton3D:
 		if found != null:
 			return found
 	return null
+
+
+## 把武器资产挂到角色骨骼的挂点上（BoneAttachment3D 挂在 Skeleton3D 下）。
+## 挂点自身带一个固定的对齐变换（WEAPON_ALIGN_MODEL），
+## 让"武器资产约定(原点=握把中心、刀身 -Z)"落到"手握持、刀身朝上"的正确姿态；
+## 之后挥砍/翻滚等动画驱动手臂 → 武器自动跟随，无需为每把武器重做动画。
+func _attach_weapon(model: Node3D) -> void:
+	if _skeleton == null or PLAYER_WEAPON == null:
+		return
+	var bone_idx := _skeleton.find_bone(WEAPON_SOCKET)
+	if bone_idx < 0:
+		push_warning("模型里没有挂点骨骼 %s，武器未装备" % WEAPON_SOCKET)
+		return
+	_weapon_socket = BoneAttachment3D.new()
+	_weapon_socket.name = "WeaponSocket"
+	_skeleton.add_child(_weapon_socket)
+	_weapon_socket.bone_name = WEAPON_SOCKET
+	# 注意：BoneAttachment3D 自己的 transform 每帧都会被"骨骼姿势"覆盖（引擎行为），
+	# 所以对齐偏移不能设在挂点上，而要设在**武器子节点**上：
+	#   武器局部变换 = (骨骼静止姿势)^-1 × 期望的模型空间姿态
+	# 这样静止时武器正好落在 WEAPON_ALIGN_MODEL，之后随骨骼（手臂动画）一起动。
+	_weapon_align_local = _bone_global_rest(bone_idx).affine_inverse() * WEAPON_ALIGN_MODEL
+	equip_weapon(PLAYER_WEAPON)
+
+
+## 计算骨骼在骨架空间里的静止姿势（从根骨骼一路乘到它）。
+## 为什么要自己算：BoneAttachment3D 的 transform 是相对"骨骼姿势"的，
+## 而我们手上的目标是"模型空间里的绝对姿态"，两者之间需要这个矩阵做换算。
+func _bone_global_rest(idx: int) -> Transform3D:
+	var t: Transform3D = _skeleton.get_bone_rest(idx)
+	var p := _skeleton.get_bone_parent(idx)
+	while p >= 0:
+		t = _skeleton.get_bone_rest(p) * t
+		p = _skeleton.get_bone_parent(p)
+	return t
+
+
+## 换武器：传入武器场景（.glb/.tscn）即可；传 null = 徒手（收刀）。
+## 约定：武器资产原点 = 握把中心、刀身沿局部 -Z（与 sword_01 一致），
+##       对齐由挂点自带的 WEAPON_ALIGN_MODEL 负责，换武器不需要改角色或动画。
+func equip_weapon(weapon_scene: PackedScene) -> void:
+	if _weapon_socket == null:
+		return
+	for child in _weapon_socket.get_children():
+		child.queue_free()
+	_weapon = null
+	if weapon_scene == null:
+		return
+	_weapon = weapon_scene.instantiate() as Node3D
+	_weapon.transform = _weapon_align_local    # 对齐偏移（见 _attach_weapon 的说明）
+	_weapon_socket.add_child(_weapon)
 
 
 ## 停掉当前动画，并把所有骨骼复位到"绑定姿势"(rest pose)。
