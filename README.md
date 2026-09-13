@@ -73,8 +73,32 @@ docs/GAME_DESIGN.md       # 设计文档与后续方向
 # exit=0 且无 SCRIPT ERROR 即通过
 ```
 
-战斗闭环自动化测试（翻滚无敌/敌我互伤/击杀重生/死亡遮罩，exit=0 即全过）：
+战斗闭环自动化测试（含玩家模型/翻滚动画/翻滚位移等 22 项断言，exit=0 即全过）：
 
 ```powershell
 & 'D:\Godot_v4.7.2-stable_win64.exe\Godot_v4.7.2-stable_win64_console.exe' --headless --path D:\GodotProject\first-game 'res://tools/autotest/m1_autotest.tscn'
 ```
+
+## 动画 QA 工具（tools/）
+
+| 工具 | 用途 |
+|---|---|
+| `tools/inspect_model.gd` | 打印 GLB 的节点树/骨骼/动画列表与时长 |
+| `tools/inspect_anim.gd` | 打印某条动画的每条轨道与关键帧数值（看清位移/旋转幅度） |
+| `tools/anim_capture/roll_capture.tscn` | 自动触发一次翻滚，配合 `--write-movie` 抓帧 |
+| `tools/anim_diff.gd` | 逐帧比较抓帧的"运动量"曲线，判断动画是否真的在播 |
+
+抓帧示例：
+
+```powershell
+& 'D:\Godot_v4.7.2-stable_win64.exe\Godot_v4.7.2-stable_win64_console.exe' --path D:\GodotProject\first-game 'res://tools/anim_capture/roll_capture.tscn' --write-movie D:\GodotProject\first-game\.tmp_anim\frame.png
+# 再分析： --headless --script res://tools/anim_diff.gd -- .tmp_anim
+```
+
+## 玩家模型与翻滚动画
+
+- 模型：`artifacts/models/player_knight/player_knight_roll.glb`（Blender 源文件在 `E:\blender\blenderproject\player_knight\`）
+- 模型自带节点动画 **RollLeap**（0.458s）：`EMT-RollPivot` 绕 X 轴 360° 前滚翻 + 向前 1m + 双臂前收/双腿收
+- 按 Shift 翻滚时自动播放；播放倍速按"动画时长 / roll_time"换算，保证与位移、无敌帧同步
+- 动画自带的 1m 前跃是**根位移**：翻滚结束时由 `_end_roll()` 用 `move_and_collide` 过继给角色本体（撞墙会少走），同时把模型复位成站姿，避免模型永久领先碰撞体
+- 翻滚总位移 ≈ 控制器 1.2m + 动画 1.0m ≈ 2.2m（`roll_speed` 可调）

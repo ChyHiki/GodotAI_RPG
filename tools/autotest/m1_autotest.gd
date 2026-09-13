@@ -41,13 +41,53 @@ func _run() -> void:
     var pivot = player.get_node_or_null("VisualPivot")
     var has_knight: bool = pivot != null and pivot.has_node("KnightModel")
     _expect(has_knight, "玩家使用外部模型 KnightModel")
+    # 模型内含 RollLeap 翻滚动画，应被自动识别到
+    _expect(player._anim_player != null, "模型含 AnimationPlayer")
+    _expect(player._roll_anim != "", "已识别翻滚动画: %s" % player._roll_anim)
+    _expect(player._roll_anim_speed > 0.1, "翻滚动画倍速有效: %.3f" % player._roll_anim_speed)
+    # 模型应被自动缩放到约 1.8m 站高、脚底贴地（换模型时的回归保护）
+    if pivot != null and pivot.has_node("KnightModel"):
+        var model = pivot.get_node("KnightModel")
+        var meshes: Array = []
+        player._collect_meshes(model, Transform3D.IDENTITY, meshes)
+        var mn := Vector3.INF
+        var mx := -Vector3.INF
+        for info in meshes:
+            var mi: MeshInstance3D = info["node"]
+            var aabb: AABB = mi.get_aabb()
+            for corner in player._aabb_corners(aabb):
+                var p: Vector3 = model.transform * ((info["xform"] as Transform3D) * corner)
+                mn = mn.min(p)
+                mx = mx.max(p)
+        var height: float = mx.y - mn.y
+        _expect(absf(height - 1.8) < 0.35, "模型站高被缩放到 1.8m 附近，实际 %.3f" % height)
+        _expect(absf(mn.y) < 0.12, "模型脚底贴地(y≈0)，实际 %.3f" % mn.y)
 
-    # ---- 1) 翻滚无敌帧：翻滚期间受伤不扣血 ----
+    # ---- 1) 翻滚无敌帧 + 翻滚动画是否真的驱动了模型节点 ----
+    var roll_pivot: Node3D = player._roll_pivot
+    if roll_pivot == null:
+        roll_pivot = _find_by_name(player, "EMT-RollPivot") as Node3D
+    _expect(roll_pivot != null, "模型含动画节点 EMT-RollPivot")
+    var pos_before: Vector3 = player.global_position
     player._try_start_roll()
     await _wait(0.1)
     player.take_damage(15, player.global_position + Vector3(0, 0, 1))
     _expect(player.health.current_hp == 100, "[翻滚无敌] 翻滚期间扣血了: %d" % player.health.current_hp)
-    await _wait(0.5)  # 等翻滚结束
+    # 翻滚中段：动画节点应已明显旋转/前移(证明 GLB 动画在播放，而不是静止姿势)
+    await _wait(0.12)   # 累计约 0.22s，接近翻滚中段
+    if roll_pivot != null:
+        var mid_rot: float = absf(roll_pivot.rotation.x)
+        var mid_z: float = absf(roll_pivot.position.z)
+        _expect(mid_rot > 0.8 or mid_z > 0.25,
+            "翻滚中段模型已翻滚(rot.x=%.2f, z=%.2f)" % [mid_rot, mid_z])
+    await _wait(0.4)    # 等整段翻滚播完(roll_time=0.42s)
+    # 翻滚结束：动画独有的"前跃 1m"根位移应已过继给本体 → 模型复位站姿 + 角色实际前移
+    if roll_pivot != null:
+        _expect(absf(roll_pivot.rotation.x) < 0.25 and absf(roll_pivot.position.z) < 0.08,
+            "翻滚结束模型复位站姿(rot.x=%.2f, z=%.2f)" % [absf(roll_pivot.rotation.x), absf(roll_pivot.position.z)])
+    var moved: float = Vector2(player.global_position.x - pos_before.x,
+        player.global_position.z - pos_before.z).length()
+    _expect(moved > 1.3, "翻滚位移含动画根位移(期望 >1.3m)，实际 %.2fm" % moved)
 
     # ---- 2) 敌人挥击命中玩家：扣 15 ----
     _place_enemy_in_front_of(enemy, player, 1.3)
@@ -113,6 +153,17 @@ func _place_enemy_in_front_of(enemy: Node3D, player: Node3D, dist: float) -> voi
 func _face_player_to(player: Node3D, dir: Vector3) -> void:
     if player.has_method("_face_instant"):
         player._face_instant(dir)
+
+
+## 按节点名递归查找（用于定位模型内部的动画节点，如 EMT-RollPivot）。
+func _find_by_name(root: Node, target: String) -> Node:
+    if root.name == target:
+        return root
+    for c in root.get_children():
+        var found := _find_by_name(c, target)
+        if found != null:
+            return found
+    return null
 
 
 func _expect(cond: bool, msg: String) -> void:
