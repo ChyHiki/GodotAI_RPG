@@ -27,11 +27,12 @@ class_name PlayerCharacter
 ##
 ##     MOVE(移动/待机) ──攻击键──▶ ATTACK(挥剑)
 ##     MOVE            ──翻滚键──▶ ROLL(无敌翻滚)
+##     MOVE            ──跳跃键──▶ JUMP(起跳/滞空) ──落地──▶ MOVE
 ##     MOVE            ◀──超时── ATTACK / ROLL / HURT
 ##     HURT(受击硬直)  ──被打死──▶ DEAD(倒地)
 ##
 ## 【输入读取方式】
-##   攻击/翻滚在 _physics_process 里用 Input.is_action_just_pressed 轮询，
+##   攻击/翻滚/跳跃在 _physics_process 里用 Input.is_action_just_pressed 轮询，
 ##   而不是靠 _unhandled_input 事件回调 —— 轮询不依赖事件是否被 UI 吃掉，
 ##   更稳定。镜头鼠标环绕在 camera 脚本里用 _input 读取。
 ##
@@ -48,7 +49,7 @@ class_name PlayerCharacter
 signal player_died
 
 ## 状态枚举：一次只能处于一种状态（详见文件头状态机图）
-enum State { MOVE, ROLL, ATTACK, HURT, DEAD }
+enum State { MOVE, ROLL, ATTACK, HURT, JUMP, DEAD }
 
 
 # ------------------------------------------------------------------
@@ -66,6 +67,15 @@ enum State { MOVE, ROLL, ATTACK, HURT, DEAD }
 @export var attack_active_start: float = 0.13 # 攻击进行到此时"判定帧"开始(能打到人)
 @export var attack_active_end: float = 0.3   # 判定帧结束（期间命中盒开启）
 @export var knockback_strength: float = 9.0  # 受击时的击退初速度
+
+## —— 跳跃手感（数值都在编辑器里可调）——
+@export var jump_velocity: float = 7.4            # 起跳初速度(米/秒)；最高点 ≈ v²/(2g) ≈ 1.1m
+@export var jump_cut_multiplier: float = 2.0      # 上升中松开跳跃键时的额外重力倍数 → 轻点=小跳
+@export var fall_gravity_multiplier: float = 1.35 # 下落阶段的额外重力倍数 → 落地更干脆
+@export var air_accel: float = 9.0                # 空中水平操控加速度(小于地面 accel → 跳跃有承诺感)
+@export var coyote_time: float = 0.12             # 土狼时间：刚离开地面仍可起跳的宽限(秒)
+@export var jump_buffer_time: float = 0.15        # 跳跃缓冲：落地前提前按跳跃也算数(秒)
+@export var land_squash_time: float = 0.18        # 落地压缩(视觉)持续时间(秒)
 
 ## 重力加速度(米/秒²)。动作游戏常用比现实重力略大，手感更"沉"
 const GRAVITY := 24.0
@@ -131,6 +141,9 @@ var _facing_dir: Vector3 = Vector3.FORWARD  # 朝攻击/翻滚方向（默认朝
 var _roll_dir: Vector3 = Vector3.ZERO   # 翻滚的方向（进入 ROLL 时锁定）
 var _bob_phase: float = 0.0            # 跑步摆腿/起伏的相位(累加时间产生循环)
 var _hurt_from: Vector3 = Vector3.ZERO # 受击来源位置（决定击退方向）
+var _coyote: float = 0.0               # 土狼时间剩余(秒)：离地后仍允许起跳的宽限
+var _jump_buffer: float = 0.0          # 跳跃缓冲剩余(秒)：落地前提前按也算数
+var _squash: float = 0.0               # 落地压缩计时(秒，纯视觉)
 
 ## Health 组件的引用（场景里的子节点，onready=子节点就绪后自动取）
 @onready var health: Health = $Health
@@ -153,16 +166,25 @@ func is_alive() -> bool:
 	return not _dead
 
 
-## 物理帧主循环：推进计时 → 轮询攻击/翻滚键 → 更新方向/速度 → 移动 → 检查状态切换
+## 物理帧主循环：推进计时 → 轮询攻击/翻滚/跳跃键 → 更新方向/速度 → 移动 → 检查状态切换
 func _physics_process(delta: float) -> void:
 	_state_time += delta                           # 状态计时
 	_attack_cooldown = maxf(0.0, _attack_cooldown - delta)
 	_iframes = maxf(0.0, _iframes - delta)         # 无敌倒计时递减
-	# ★ 攻击/翻滚用"轮询"读取：不依赖事件是否被 UI 吞掉，稳定可靠
+	_coyote = maxf(0.0, _coyote - delta)           # 土狼时间递减
+	_jump_buffer = maxf(0.0, _jump_buffer - delta) # 跳跃缓冲递减
+	_squash = maxf(0.0, _squash - delta)           # 落地压缩递减
+	if is_on_floor():
+		_coyote = coyote_time                      # 站在地面上就刷新土狼时间
+	# ★ 攻击/翻滚/跳跃都用"轮询"读取：不依赖事件是否被 UI 吞掉，稳定可靠
 	if Input.is_action_just_pressed("attack"):
 		_try_start_attack()
 	if Input.is_action_just_pressed("roll"):
 		_try_start_roll()
+	if Input.is_action_just_pressed("jump"):
+		_jump_buffer = jump_buffer_time            # 先记进缓冲，落地瞬间会自动补跳
+	if _jump_buffer > 0.0:
+		_try_start_jump()                          # 不满足条件时(如已在空中)会被函数自己拒绝
 	_update_wish_dir()                             # 读输入算出移动意图
 	_update_velocity(delta)                        # 按状态给 velocity 赋值
 	move_and_slide()                               # 让引擎真正移动+碰撞+落地
@@ -237,6 +259,27 @@ func _try_start_roll() -> void:
 		_anim_player.play(_roll_anim, -1.0, _roll_anim_speed)
 
 
+## 尝试起跳（由物理帧里的"跳跃缓冲"驱动调用）。
+## 可以被接受的情况：
+##   ① 正站在地面上；
+##   ② 刚离开地面不久（还在 coyote_time 土狼时间内，跳崖边不会"按了没反应"）。
+## 会被拒绝的情况：翻滚/攻击/受击硬直中、已经在空中（不做二段跳）、已死亡。
+## 实现要点：竖直速度是"直接赋值"而不是插值——起跳要脆、要立刻响应；
+##           水平速度不重置，这样跑动中跳跃能保留冲量(跳跃距离自然更远)。
+func _try_start_jump() -> void:
+	if _dead or state == State.ROLL or state == State.ATTACK or state == State.HURT:
+		return
+	if state == State.JUMP:
+		return                                      # 已在空中 → 不可二段跳
+	if not is_on_floor() and _coyote <= 0.0:
+		return                                      # 既不在地面、也不在土狼时间内
+	velocity.y = jump_velocity
+	_coyote = 0.0
+	_jump_buffer = 0.0
+	state = State.JUMP
+	_state_time = 0.0
+
+
 ## 状态超时检测：每个状态是否该结束/切换（被 _physics_process 每帧调用）。
 func _update_state(_delta: float) -> void:
 	match state:
@@ -244,6 +287,10 @@ func _update_state(_delta: float) -> void:
 			_face_towards(_wish_dir, _delta)      # 走路时身体平滑转向移动方向
 			if _wish_dir.length() > 0.1:
 				_bob_phase += _delta * 10.0       # 在动才累计跑步相位
+			# 走下台阶/跳下平台：过了土狼时间仍未落地 → 进入 JUMP(下落)状态
+			if not is_on_floor() and _coyote <= 0.0:
+				state = State.JUMP
+				_state_time = 0.0
 		State.ROLL:
 			if _state_time >= roll_time:          # 翻滚时间到 → 结束
 				_end_roll()
@@ -257,6 +304,12 @@ func _update_state(_delta: float) -> void:
 			if _state_time >= 0.32:               # 受击硬直 0.32s 后恢复行动
 				state = State.MOVE
 				_state_time = 0.0
+		State.JUMP:
+			# 落地判定：踩到地面且竖直速度已非上升 → 回移动状态 + 触发落地压缩(视觉)
+			if is_on_floor() and velocity.y <= 0.01:
+				state = State.MOVE
+				_state_time = 0.0
+				_squash = land_squash_time
 		State.DEAD:
 			pass                                  # 死亡状态保持，等主场景重开
 
@@ -292,7 +345,17 @@ func _end_roll() -> void:
 ##           数字越大越"贴"，越小越"滑"。
 func _update_velocity(delta: float) -> void:
 	if not is_on_floor():
-		velocity.y -= GRAVITY * delta            # 落地前一直下落
+		# 重力分三段，做出"起跳跟手、下落利落"的手感：
+		#   ① 上升中且按住跳跃键 → 常规重力(跳满高度)
+		#   ② 上升中但松开了跳跃键 → 重力×jump_cut_multiplier(轻点=小跳)
+		#   ③ 下落中 → 重力×fall_gravity_multiplier(落地更干脆，不飘)
+		var g := GRAVITY
+		if velocity.y > 0.0:
+			if not Input.is_action_pressed("jump"):
+				g *= jump_cut_multiplier
+		else:
+			g *= fall_gravity_multiplier
+		velocity.y -= g * delta
 	match state:
 		State.MOVE:
 			var target := _wish_dir * move_speed
@@ -309,6 +372,12 @@ func _update_velocity(delta: float) -> void:
 			# 攻击/受击硬直时快速刹停（不能一边走一边挥）
 			velocity.x = lerpf(velocity.x, 0.0, 1.0 - exp(-12.0 * delta))
 			velocity.z = lerpf(velocity.z, 0.0, 1.0 - exp(-12.0 * delta))
+		State.JUMP:
+			# 空中水平操控：加速度比地面小 → 起跳后难以大幅变向(跳跃"有承诺感")
+			var target := _wish_dir * move_speed
+			var t := 1.0 - exp(-air_accel * delta)
+			velocity.x = lerpf(velocity.x, target.x, t)
+			velocity.z = lerpf(velocity.z, target.z, t)
 		State.DEAD:
 			# 死亡后慢慢停住（尸体不滑走）
 			velocity.x = lerpf(velocity.x, 0.0, 1.0 - exp(-8.0 * delta))
@@ -770,6 +839,18 @@ func _process(delta: float) -> void:
 		_animate_model(delta)      # 骑士模型：整体姿态
 	else:
 		_animate_robot(delta)      # 原语小蓝人：肢体级动画
+	_apply_land_squash()           # 落地压缩统一在这里生效(避免各状态残留缩放)
+
+
+## 落地压缩（纯视觉）：落地后 0.18s 内把模型压扁一点（x/z 略宽、y 略矮），
+## 让"落地"这一下有重量感。每帧统一设置 scale，所以不会有残留。
+## 注：命中盒是 VisualPivot 的子节点，缩放会带来 ±10% 的判定盒变化(0.18s 内，可忽略)。
+func _apply_land_squash() -> void:
+	if _squash > 0.0:
+		var k := _squash / maxf(0.01, land_squash_time)      # 1 → 0
+		_pivot.scale = Vector3(1.0 + 0.10 * k, 1.0 - 0.16 * k, 1.0 + 0.10 * k)
+	else:
+		_pivot.scale = Vector3.ONE
 
 
 ## 原语小蓝人的肢体动画（甩腿/挥剑/收臂等，见状态枚举）。
@@ -826,6 +907,18 @@ func _animate_robot(delta: float) -> void:
 			_pivot.position.y = lerpf(_pivot.position.y, 0.0, 1.0 - exp(-16.0 * delta))
 			_shoulder_r.rotation.x = lerpf(_shoulder_r.rotation.x, 0.9, 1.0 - exp(-10.0 * delta))
 			_shoulder_l.rotation.x = lerpf(_shoulder_l.rotation.x, 0.9, 1.0 - exp(-10.0 * delta))
+		State.JUMP:
+			# 原语小蓝人：起跳屈腿收臂，下落时伸腿准备着地
+			var rising := velocity.y > 0.0
+			var leg_tuck := 0.9 if rising else 0.25
+			if _leg_r != null:
+				_leg_r.rotation.x = lerpf(_leg_r.rotation.x, leg_tuck, 1.0 - exp(-14.0 * delta))
+				_leg_l.rotation.x = lerpf(_leg_l.rotation.x, leg_tuck, 1.0 - exp(-14.0 * delta))
+			if _shoulder_r != null:
+				var arm := -0.6 if rising else -0.2
+				_shoulder_r.rotation.x = lerpf(_shoulder_r.rotation.x, arm, 1.0 - exp(-14.0 * delta))
+				_shoulder_l.rotation.x = lerpf(_shoulder_l.rotation.x, arm, 1.0 - exp(-14.0 * delta))
+			_pivot.position.y = 0.0
 		State.DEAD:
 			# 死亡：0.55 秒内向前栽倒(-90°)，略微抬离地面避免插进地板
 			_pivot.rotation.x = -PI / 2.0 * clampf(_state_time / 0.55, 0.0, 1.0)
@@ -873,6 +966,12 @@ func _animate_model(delta: float) -> void:
 				_set_hitbox_active(false)
 				var k := (_state_time - slash) / maxf(0.01, attack_total - slash)
 				_pivot.rotation.x = lerp_angle(_pivot.rotation.x, 0.0, k * k)     # 回正
+			_pivot.position.y = 0.0
+		State.JUMP:
+			# 骑士模型(无跳跃动画)：用整体姿态表达——
+			#   上升阶段身体前收(像蜷腿起跳)，下落阶段微微后仰准备着地
+			var lean := -0.20 if velocity.y > 0.0 else 0.12
+			_pivot.rotation.x = lerp_angle(_pivot.rotation.x, lean, 1.0 - exp(-9.0 * delta))
 			_pivot.position.y = 0.0
 		State.HURT:
 			# 受击后仰

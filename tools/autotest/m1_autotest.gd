@@ -89,6 +89,41 @@ func _run() -> void:
         player.global_position.z - pos_before.z).length()
     _expect(moved > 1.3, "翻滚位移含动画根位移(期望 >1.3m)，实际 %.2fm" % moved)
 
+    # ---- 1c) 跳跃：按住跳得高 / 空中不能二段跳 / 落地恢复 / 轻点跳得矮 ----
+    var gy_before: float = player.global_position.y
+    Input.action_press("jump")                       # 模拟"按住跳跃键"
+    player._try_start_jump()
+    await _wait(0.06)
+    _expect(player.global_position.y > gy_before + 0.05,
+        "起跳后升空(%.2f → %.2f)" % [gy_before, player.global_position.y])
+    var vy_before: float = player.velocity.y
+    player._try_start_jump()                         # 空中再按 → 不应生效(无二段跳)
+    await _wait(0.02)
+    _expect(player.velocity.y <= vy_before + 0.01,
+        "空中不能二段跳(vy %.2f → %.2f)" % [vy_before, player.velocity.y])
+    var full_peak: float = player.global_position.y
+    for i in 40:                                     # 采样约 0.8s 取最高点
+        await _wait(0.02)
+        full_peak = maxf(full_peak, player.global_position.y)
+    Input.action_release("jump")
+    var full_h: float = full_peak - gy_before
+    _expect(full_h > 0.9 and full_h < 1.6, "按住跳跃的高度约 1.1m，实际 %.2fm" % full_h)
+    await _wait(0.6)                                 # 等落地
+    _expect(player.is_on_floor(), "跳跃后已落地")
+    _expect(absf(player.global_position.y - gy_before) < 0.15,
+        "落地后回到地面高度(%.2f)" % player.global_position.y)
+
+    # 轻点跳跃(不按住) → 可变跳跃高度应该明显更低
+    var hop_base: float = player.global_position.y
+    player._try_start_jump()
+    var hop_peak: float = hop_base
+    for i in 30:                                     # 采样约 0.6s
+        await _wait(0.02)
+        hop_peak = maxf(hop_peak, player.global_position.y)
+    var hop_h: float = hop_peak - hop_base
+    _expect(hop_h < full_h - 0.15, "轻点跳跃更矮(轻点 %.2fm < 按住 %.2fm)" % [hop_h, full_h])
+    await _wait(0.6)
+
     # ---- 2) 敌人挥击命中玩家：扣 15 ----
     _place_enemy_in_front_of(enemy, player, 1.3)
     await _wait(0.2)

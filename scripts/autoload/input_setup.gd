@@ -26,6 +26,7 @@ func _ready() -> void:
     _add_key("move_left", [KEY_A, KEY_LEFT])     # 左移：A 或 ←
     _add_key("move_right", [KEY_D, KEY_RIGHT])   # 右移：D 或 →
     _add_key("roll", [KEY_SHIFT])                # 翻滚：Shift
+    _add_key("jump", [KEY_SPACE])                # 跳跃：空格
     _add_key("restart", [KEY_R])                 # 重新开始：R
     _add_mouse_button("attack", MOUSE_BUTTON_LEFT)  # 攻击：鼠标左键
 
