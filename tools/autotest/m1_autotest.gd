@@ -93,17 +93,22 @@ func _run() -> void:
     if weapon != null and pivot != null and pivot.has_node("KnightModel"):
         var wmodel = pivot.get_node("KnightModel")
         var winv: Transform3D = wmodel.global_transform.affine_inverse()
+        # ① 握柄应落在拳心（= 挂点骨骼原点）
+        var grip: Vector3 = winv * weapon.global_position
+        var socket_idx: int = player._skeleton.find_bone("weapon.R")
+        var bone_pos: Vector3 = player._skeleton.get_bone_global_pose(socket_idx).origin
+        var grip_off: float = grip.distance_to(bone_pos)
+        _expect(grip_off < 0.06, "握柄位于拳心(偏差 %.3fm)" % grip_off)
+        # ② 刀身应朝向身前(模型 -Z)，而不是贴在手臂上
+        var blade: Vector3 = ((winv.basis * weapon.global_basis) * Vector3(0, 0, -1)).normalized()
+        var blade_ang: float = rad_to_deg(blade.angle_to(Vector3(0, 0, -1)))
+        _expect(blade_ang < 25.0, "刀身朝身前(与前方夹角 %.1f°)" % blade_ang)
+        # ③ 剑刃应伸到身体前方（不再和手臂叠在一起）
         var wbounds: Array = [Vector3.INF, -Vector3.INF]
         _accumulate_bounds(weapon, winv, wbounds)
         var wmn: Vector3 = wbounds[0]
-        var wmx: Vector3 = wbounds[1]
-        # 基准 = 武器分离前旧模型里 GEO-sword_01 的实测包围盒（模型空间）
-        var ref_mn := Vector3(0.250, 0.530, -0.015)
-        var ref_mx := Vector3(0.410, 1.720, 0.055)
-        var off: float = ((wmn + wmx) * 0.5 - (ref_mn + ref_mx) * 0.5).length()
-        _expect(off < 0.08, "武器静止位置与分离前一致(中心偏差 %.3fm)" % off)
-        _expect(wmx.y > 1.4, "刀身朝上握持(剑尖 y=%.2f)" % wmx.y)
-        # 挥砍时剑应随手臂骨骼大幅移动（证明是骨骼挂载，不是钉死在原地）
+        _expect(wmn.z < -0.6, "剑刃伸向身体前方(最前端 z=%.2f)" % wmn.z)
+        # ④ 挥砍时剑应随手臂骨骼大幅移动（证明是骨骼挂载，不是钉死在原地）
         var rel_before: Vector3 = winv * weapon.global_position
         player._try_start_attack()
         await _wait(0.3)                       # 劈砍段
@@ -149,34 +154,35 @@ func _run() -> void:
     _expect(not player._anim_player.is_playing(), "攻击结束后动画已停止")
     _expect(_bones_at_rest(player), "攻击结束后骨骼复位")
 
-    # ---- 1d) 跳跃：JumpStart → JumpAir → 落地复位；按住跳高、无二段跳、轻点跳矮 ----
+    # ---- 1d) 跳跃：地面蓄力(JumpStart) → 离地(JumpAir) → 落地复位 ----
     var gy_before: float = player.global_position.y
     Input.action_press("jump")                       # 模拟"按住跳跃键"
     player._try_start_jump()
     await _wait(0.06)
     _expect(player._anim_player.current_animation == player._jump_start_anim,
-        "起跳播放 %s(实际 %s)" % [player._jump_start_anim, player._anim_player.current_animation])
-    _expect(player.global_position.y > gy_before + 0.05,
-        "起跳后升空(%.2f → %.2f)" % [gy_before, player.global_position.y])
+        "起跳蓄力段播放 %s(实际 %s)" % [player._jump_start_anim, player._anim_player.current_animation])
+    _expect(player.global_position.y <= gy_before + 0.05,
+        "蓄力段仍留在地面(未提前离地, y=%.2f)" % player.global_position.y)
 
-    # 一次性采样整段腾空过程，同时验证三件事：
-    #   ① 最高点(用于"按住跳得高"和"轻点跳得矮"的对比)
-    #   ② 是否切到了滞空循环动画 JumpAir
-    #   ③ 空中再按跳跃无效(无二段跳)
+    # 采样整段：蓄力 → 离地 → 滞空 → 落地；同时验证最高点/滞空动画/无二段跳
     var full_peak: float = player.global_position.y
     var saw_air_anim := false
+    var launched := false
     var double_jump_blocked := true
-    for i in 45:                                     # 约 0.9s，覆盖整段跳跃
+    for i in 55:                                     # 约 1.1s（含 0.18s 蓄力）
         await _wait(0.02)
         full_peak = maxf(full_peak, player.global_position.y)
+        if player.global_position.y > gy_before + 0.12:
+            launched = true
         if player._anim_player.current_animation == player._jump_air_anim:
             saw_air_anim = true
-        if i == 20:                                  # 约 0.5s：已过起跳段且仍在空中
+        if i == 25:                                  # 约 0.5s：蓄力已结束、人在空中
             var vy_before: float = player.velocity.y
             player._try_start_jump()                 # 空中再按 → 不应生效
             await _wait(0.02)
             double_jump_blocked = player.velocity.y <= vy_before + 0.01
     Input.action_release("jump")
+    _expect(launched, "蓄力结束后才真正离地升空")
     _expect(saw_air_anim, "滞空阶段播放 %s" % player._jump_air_anim)
     _expect(double_jump_blocked, "空中不能二段跳")
     var full_h: float = full_peak - gy_before

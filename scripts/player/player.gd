@@ -52,7 +52,7 @@ class_name PlayerCharacter
 signal player_died
 
 ## 状态枚举：一次只能处于一种状态（详见文件头状态机图）
-enum State { MOVE, ROLL, ATTACK, HURT, JUMP, DEAD }
+enum State { MOVE, ROLL, ATTACK, HURT, JUMP_PREP, JUMP, DEAD }
 
 
 # ------------------------------------------------------------------
@@ -86,6 +86,11 @@ enum State { MOVE, ROLL, ATTACK, HURT, JUMP, DEAD }
 @export var coyote_time: float = 0.12             # 土狼时间：刚离开地面仍可起跳的宽限(秒)
 @export var jump_buffer_time: float = 0.15        # 跳跃缓冲：落地前提前按跳跃也算数(秒)
 @export var land_squash_time: float = 0.18        # 落地压缩(视觉)持续时间(秒)
+## 起跳蓄力(预备)时长(秒)：按跳跃键后**先在地面**播完 JumpStart 的蹬地段，才真正离地。
+## 【为什么需要】JumpStart 是"蹲身→蹬地→踮脚离地"的地面动作；若一按就立刻给向上速度，
+##   人已经飞到空中了还在播蹬地动画（动画与位移不同步）。
+## 取值权衡：越大越"有重量感"但起跳越迟钝；0.15~0.22 比较跟手，0 = 立即起跳(无蓄力)。
+@export var jump_prep_time: float = 0.18
 
 ## —— 行走动画对齐 ——
 ## Walk 动画的"自然前进速度"(米/秒) = 一个周期的步幅 ÷ 周期时长。
@@ -120,16 +125,16 @@ const MODEL_TARGET_HEIGHT := 1.8
 const PLAYER_WEAPON := preload("res://assets/weapons/sword_01/sword_01.glb")
 ## 武器挂点骨骼名（角色模型里的空骨骼）。换手/背挂只需改这里，或再建挂点骨骼。
 const WEAPON_SOCKET := "weapon.R"
-## 挂点对齐变换（模型空间）：把武器摆成"握柄在手里、刀身朝上"。
-## 【为什么需要】挂点骨骼 weapon.R 的静止基是 +Z≈模型上方、+Y≈模型前方，
-##   而武器刀身沿自身 -Z；直接单位变换挂上去刀身会朝**下**（实测整把剑落到 y≈-0.4，插进地面）。
-## 【数值怎么来的】武器分离前的旧模型里剑是绑在 weapon.R 上的，实测网格范围
-##   握柄 y 0.530~0.785(中心 0.6575)、x 中心 0.330、z 中心 0.020；刀身朝上到 y=1.720。
-##   所以：绕 X 轴 +90°（把 -Z 刀身转成 +Y 朝上）+ 平移到旧握柄中心，
-##   即可让独立武器回到"未分离时"的位置（挥砍/行走姿态自然一致）。
-## 【怎么验证】跑 tools/check_weapon.tscn 会打印实测包围盒并与旧模型基准对比；
-##   自动测试里也有对应断言（偏差 < 8cm）。
-const WEAPON_ALIGN_MODEL := Transform3D(Basis(Vector3(1, 0, 0), PI / 2.0), Vector3(0.330, 0.6575, 0.020))
+## 挂点对齐变换（相对挂点骨骼）：让**握柄停在骨骼原点(拳心)、刀身沿骨骼 +Y 朝向身前**。
+## 【为什么沿 +Y】挂点骨骼 weapon.R 的静止基实测为：
+##   +Y ≈ 模型前方(-Z)、+Z ≈ 模型上方、+X ≈ 模型右侧 —— 骨骼本身就是"沿 +Y 指向前方"的持械轴。
+##   而武器刀身沿自身 -Z，所以绕骨骼 X 轴 +90°（-Z → +Y）即可把刀身扳到身前。
+## 【为什么不沿用旧位置】武器分离前旧模型里剑是**竖直朝上**贴在手臂外侧的，
+##   照抄那个位置会让刀身陷在手臂网格里（实测剑与手臂包围盒重叠），视觉上像"嵌在手臂中"。
+##   朝前握持才是正常姿态。
+## 【怎么验证】tools/check_weapon.tscn 会打印"握柄到拳心距离"和"刀身指向与模型前方的夹角"；
+##   自动测试也有对应断言（握柄≈拳心、刀身朝前、挥砍时跟随手臂）。
+const WEAPON_ALIGN_LOCAL := Transform3D(Basis(Vector3(1, 0, 0), PI / 2.0), Vector3.ZERO)
 
 ## 是否正在使用外部模型（true=用模型；false=用原语小蓝人兜底）
 var _use_model: bool = false
@@ -149,13 +154,11 @@ var _walk_anim: String = ""
 var _slash_anim: String = ""
 var _jump_start_anim: String = ""
 var _jump_air_anim: String = ""
-## 起跳段时长(秒)：起跳动画播完（或已离地超过这段时间）就切到滞空循环动画
-var _jump_start_dur: float = 0.0
 ## 武器挂点（BoneAttachment3D，挂在模型的 weapon.R 骨骼上）
 var _weapon_socket: BoneAttachment3D = null
 ## 当前装备的武器节点（徒手时为 null）
 var _weapon: Node3D = null
-## 武器相对挂点的对齐偏移（由 _attach_weapon 按骨骼静止姿势算出，见那里的说明）
+## 武器相对挂点的对齐偏移（= WEAPON_ALIGN_LOCAL，设在武器子节点上，见 _attach_weapon）
 var _weapon_align_local: Transform3D = Transform3D.IDENTITY
 ## 模型的骨骼节点：用于"没有动画时"把骨骼复位成绑定姿势（见 _anim_to_rest）。
 ## 为什么需要：骨骼动画一停播，骨骼会冻在停播那一帧的姿势上。
@@ -328,34 +331,48 @@ func _try_start_roll() -> void:
 
 ## 尝试起跳（由物理帧里的"跳跃缓冲"驱动调用）。
 ## 可以被接受的情况：
-##   ① 正站在地面上；
-##   ② 刚离开地面不久（还在 coyote_time 土狼时间内，跳崖边不会"按了没反应"）。
-## 会被拒绝的情况：翻滚/攻击/受击硬直中、已经在空中（不做二段跳）、已死亡。
-## 实现要点：竖直速度是"直接赋值"而不是插值——起跳要脆、要立刻响应；
-##           水平速度不重置，这样跑动中跳跃能保留冲量(跳跃距离自然更远)。
+##   ① 正站在地面上；② 刚离开地面不久（还在 coyote_time 土狼时间内）。
+## 会被拒绝的情况：翻滚/攻击/受击硬直中、已经在跳跃流程里（不做二段跳）、已死亡。
+## 【两段式起跳】站在地面且有 JumpStart 动画时，先进入 JUMP_PREP 蓄力段
+##   （原地播完蹬地动作，**仍在地面**），蓄力结束才由 _launch_jump() 真正给向上速度；
+##   若人已在空中（走下平台的土狼跳），则跳过蓄力直接进入 JUMP。
 func _try_start_jump() -> void:
 	if _dead or state == State.ROLL or state == State.ATTACK or state == State.HURT:
 		return
-	if state == State.JUMP:
-		return                                      # 已在空中 → 不可二段跳
+	if state == State.JUMP or state == State.JUMP_PREP:
+		return                                      # 已在跳跃流程中 → 不可二段跳
 	if not is_on_floor() and _coyote <= 0.0:
 		return                                      # 既不在地面、也不在土狼时间内
-	velocity.y = jump_velocity
-	_coyote = 0.0
 	_jump_buffer = 0.0
-	state = State.JUMP
-	_state_time = 0.0
-	# 起跳动画：按"上升到最高点所需时间"换算播放倍速，让蹬地动作与起跳初速度对齐
-	if _anim_player != null and _jump_start_anim != "":
-		var rise := maxf(0.08, jump_velocity / GRAVITY)   # 7.4/24 ≈ 0.31s
+	_coyote = 0.0
+	if is_on_floor() and _anim_player != null and _jump_start_anim != "" and jump_prep_time > 0.01:
+		# —— 蓄力段：留在地面，播放蹬地预备动作（按 jump_prep_time 换算倍速）——
+		state = State.JUMP_PREP
+		_state_time = 0.0
 		var a := _anim_player.get_animation(_jump_start_anim)
 		var spd := 1.0
 		if a != null and a.length > 0.01:
-			spd = a.length / rise
-		_jump_start_dur = rise
+			spd = a.length / jump_prep_time          # 0.375s ÷ 0.18s ≈ 2.08 倍速
 		_anim_player.speed_scale = 1.0
 		_anim_player.stop()
 		_anim_player.play(_jump_start_anim, -1.0, spd)
+	else:
+		_launch_jump(true)
+
+
+## 真正起跳：给向上初速度并进入空中状态（JUMP），切换为滞空循环动画。
+## @param with_impulse true=给跳跃初速度(正常起跳)；false=不给冲量(蓄力途中掉下平台)
+## 实现要点：竖直速度"直接赋值"而不是插值——起跳要脆、要立刻响应；
+##           水平速度不重置，跑动中跳跃能保留冲量(跳跃距离自然更远)。
+func _launch_jump(with_impulse: bool) -> void:
+	if with_impulse:
+		velocity.y = jump_velocity
+	state = State.JUMP
+	_state_time = 0.0
+	if _anim_player != null and _jump_air_anim != "":
+		_anim_player.speed_scale = 1.0
+		_anim_player.stop()
+		_anim_player.play(_jump_air_anim, -1.0, 1.0)
 
 
 ## 状态超时检测：每个状态是否该结束/切换（被 _physics_process 每帧调用）。
@@ -382,10 +399,16 @@ func _update_state(_delta: float) -> void:
 			if _state_time >= 0.32:               # 受击硬直 0.32s 后恢复行动
 				state = State.MOVE
 				_state_time = 0.0
+		State.JUMP_PREP:
+			# 蓄力段（仍在地面）：播蹬地预备动作；时间到 → 真正起跳。
+			# 若中途掉下平台（不再是 on_floor 且过了土狼时间）→ 不给冲量直接进入空中。
+			if not is_on_floor() and _coyote <= 0.0:
+				_launch_jump(false)
+			elif _state_time >= jump_prep_time:
+				_launch_jump(true)
 		State.JUMP:
-			# 落地判定：踩到地面且竖直速度已非上升 → 回移动状态 + 落地压缩 + 收掉跳跃动画。
-			# 注意：必须在这里(状态切换的瞬间)收动画，不能在动画分支里按 is_on_floor()
-			# 判断——起跳的头一两帧角色还站在地上，那样会把 JumpStart 掐断。
+			# 落地判定：踩到地面且竖直速度已非上升 → 回移动状态 + 落地压缩 + 收掉滞空动画。
+			# （起跳的蹬地动画在 JUMP_PREP 的地面阶段就播完了，这里只需处理滞空循环）
 			if is_on_floor() and velocity.y <= 0.01:
 				state = State.MOVE
 				_state_time = 0.0
@@ -457,8 +480,8 @@ func _update_velocity(delta: float) -> void:
 			# 攻击/受击硬直时快速刹停（不能一边走一边挥）
 			velocity.x = lerpf(velocity.x, 0.0, 1.0 - exp(-12.0 * delta))
 			velocity.z = lerpf(velocity.z, 0.0, 1.0 - exp(-12.0 * delta))
-		State.JUMP:
-			# 空中水平操控：加速度比地面小 → 起跳后难以大幅变向(跳跃"有承诺感")
+		State.JUMP_PREP, State.JUMP:
+			# 蓄力段与空中都用较小的水平加速度：保留起跳冲量，但很难在空中大幅变向
 			var target := _wish_dir * move_speed
 			var t := 1.0 - exp(-air_accel * delta)
 			velocity.x = lerpf(velocity.x, target.x, t)
@@ -775,23 +798,9 @@ func _attach_weapon(model: Node3D) -> void:
 	_skeleton.add_child(_weapon_socket)
 	_weapon_socket.bone_name = WEAPON_SOCKET
 	# 注意：BoneAttachment3D 自己的 transform 每帧都会被"骨骼姿势"覆盖（引擎行为），
-	# 所以对齐偏移不能设在挂点上，而要设在**武器子节点**上：
-	#   武器局部变换 = (骨骼静止姿势)^-1 × 期望的模型空间姿态
-	# 这样静止时武器正好落在 WEAPON_ALIGN_MODEL，之后随骨骼（手臂动画）一起动。
-	_weapon_align_local = _bone_global_rest(bone_idx).affine_inverse() * WEAPON_ALIGN_MODEL
+	# 所以对齐偏移不能设在挂点上，而要设在**武器子节点**上（见 equip_weapon）。
+	_weapon_align_local = WEAPON_ALIGN_LOCAL
 	equip_weapon(PLAYER_WEAPON)
-
-
-## 计算骨骼在骨架空间里的静止姿势（从根骨骼一路乘到它）。
-## 为什么要自己算：BoneAttachment3D 的 transform 是相对"骨骼姿势"的，
-## 而我们手上的目标是"模型空间里的绝对姿态"，两者之间需要这个矩阵做换算。
-func _bone_global_rest(idx: int) -> Transform3D:
-	var t: Transform3D = _skeleton.get_bone_rest(idx)
-	var p := _skeleton.get_bone_parent(idx)
-	while p >= 0:
-		t = _skeleton.get_bone_rest(p) * t
-		p = _skeleton.get_bone_parent(p)
-	return t
 
 
 ## 换武器：传入武器场景（.glb/.tscn）即可；传 null = 徒手（收刀）。
@@ -1100,6 +1109,15 @@ func _animate_robot(delta: float) -> void:
 			_pivot.position.y = lerpf(_pivot.position.y, 0.0, 1.0 - exp(-16.0 * delta))
 			_shoulder_r.rotation.x = lerpf(_shoulder_r.rotation.x, 0.9, 1.0 - exp(-10.0 * delta))
 			_shoulder_l.rotation.x = lerpf(_shoulder_l.rotation.x, 0.9, 1.0 - exp(-10.0 * delta))
+		State.JUMP_PREP:
+			# 原语小蓝人：蓄力段下蹲(整体压低 + 屈腿)
+			_pivot.position.y = lerpf(_pivot.position.y, -0.16, 1.0 - exp(-14.0 * delta))
+			if _leg_r != null:
+				_leg_r.rotation.x = lerpf(_leg_r.rotation.x, 0.7, 1.0 - exp(-14.0 * delta))
+				_leg_l.rotation.x = lerpf(_leg_l.rotation.x, 0.7, 1.0 - exp(-14.0 * delta))
+			if _shoulder_r != null:
+				_shoulder_r.rotation.x = lerpf(_shoulder_r.rotation.x, 0.5, 1.0 - exp(-14.0 * delta))
+				_shoulder_l.rotation.x = lerpf(_shoulder_l.rotation.x, 0.5, 1.0 - exp(-14.0 * delta))
 		State.JUMP:
 			# 原语小蓝人：起跳屈腿收臂，下落时伸腿准备着地
 			var rising := velocity.y > 0.0
@@ -1178,14 +1196,14 @@ func _animate_model(delta: float) -> void:
 					var k := (_state_time - slash_end) / maxf(0.01, attack_total - slash_end)
 					_pivot.rotation.x = lerp_angle(_pivot.rotation.x, 0.0, k * k)
 			_pivot.position.y = 0.0
+		State.JUMP_PREP:
+			# 蓄力段：姿态完全交给 JumpStart 动画（蹲身→蹬地），整体节点不要再叠加姿态
+			_pivot.rotation.x = lerp_angle(_pivot.rotation.x, 0.0, 1.0 - exp(-12.0 * delta))
+			_pivot.position.y = 0.0
 		State.JUMP:
-			if _anim_player != null and (_jump_start_anim != "" or _jump_air_anim != ""):
-				# 起跳段播 JumpStart；起跳段结束后（或本来就是走下平台，_jump_start_dur=0）
-				# 切到 JumpAir 循环。收动画由状态机在"真正落地"时处理（见 _update_state）。
-				var in_start := _jump_start_anim != "" and _state_time < _jump_start_dur \
-						and _anim_player.current_animation == _jump_start_anim
-				if not in_start and _jump_air_anim != "" \
-						and _anim_player.current_animation != _jump_air_anim:
+			if _anim_player != null and _jump_air_anim != "":
+				# 离地即播滞空循环（蹬地动画已在地面蓄力段播完，这里不再回头播 JumpStart）
+				if _anim_player.current_animation != _jump_air_anim:
 					_anim_player.speed_scale = 1.0
 					_anim_player.play(_jump_air_anim, -1.0, 1.0)
 				# 有跳跃动画时不再叠加整体前倾/后仰

@@ -62,10 +62,15 @@ UI/设置存档 / 演出 / 发布构建
 - **武器与角色分离**：角色只带挂点骨骼 `weapon.R`，武器在 Godot 里用 `BoneAttachment3D` 附加。
   换武器只需导出新武器资产并调用 `player.equip_weapon(...)`，**角色模型与全部动画不用动**。
 - **武器对齐（实测修正）**：武器资产的原点 = 握把中心、**刀身沿局部 -Z**。
-  挂点骨骼 `weapon.R` 的静止基是 +Z≈模型上方、+Y≈模型前方，所以**不能单位变换直挂**——
-  那样刀身会朝下（实测整把剑掉到 y≈-0.4、中心偏差 0.955 m）。
-  现用固定对齐变换 `WEAPON_ALIGN_MODEL`（绕 X +90° 让刀身立起 + 平移到"分离前"的旧握柄中心）修正，
-  **实测中心偏差 0.034 m**；回归方式：`tools/check_weapon.tscn` + 自动测试的武器断言。
+  挂点骨骼 `weapon.R` 的静止基实测为 +Y≈模型前方(-Z)、+Z≈模型上方、+X≈模型右侧——
+  即"沿 +Y 指向前方"的持械轴。因此对齐规则是：**握柄停在骨骼原点(拳心)、刀身沿骨骼 +Y 指向身前**，
+  代码里就是常量 `WEAPON_ALIGN_LOCAL`（绕骨骼 X 轴 +90°）。
+  两个踩过的坑：① 单位变换直挂会让刀身朝**下**（整把剑掉到 y≈-0.4）；
+  ② 照抄"武器分离前"旧模型的竖直位置会让刀身**嵌在手臂里**（旧模型里剑就是贴着手臂竖直朝上的）。
+  实测结果：握柄偏差 **0.000 m**、刀身与身前夹角 **8°**；回归方式：
+  `tools/check_weapon.tscn` + 自动测试的 6 项武器断言。
+- **跳跃是两段式**：`JUMP_PREP`(地面蓄力 0.18s，播 `JumpStart` 蹬地) → `_launch_jump()` 给向上速度并进入 `JUMP`(播 `JumpAir`)。
+  这样"蹬地动画"与"离地时刻"对齐（否则一按就起飞、人已在空中还在播蹬地）。蓄力时长由 `jump_prep_time` 调（0=立即起跳）。
 - **改模型流程**：用 Blender 打开 blenderproject 里的源文件 → 修改 → 导出 GLB（勾选 Animation）→ 覆盖 `assets/characters/player_knight/player_knight.glb` → Godot 自动重新导入
 - **Godot 接入状态**：`scripts/player/player.gd` 已接线——自动识别模型动画并按状态播放（MOVE→Walk / ROLL→RollLeap / ATTACK→Slash / JUMP→JumpStart→JumpAir）；未识别到动画时退回原语"小蓝人"与脚本姿态兜底
 - 想让 AI 改模型时，直接说"改 `E:\blender\blenderproject\player_knight` 里的模型"即可
