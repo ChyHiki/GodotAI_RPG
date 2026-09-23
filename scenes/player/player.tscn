@@ -1,19 +1,18 @@
-[gd_scene load_steps=4 format=3]
+[gd_scene format=3 uid="uid://b4jfsgqpkec0s"]
 
-[ext_resource type="Script" path="res://scripts/player/player.gd" id="1"]
-[ext_resource type="Script" path="res://scripts/components/health.gd" id="2"]
+[ext_resource type="Script" uid="uid://lv0s1dwyfr3o" path="res://scripts/player/player.gd" id="1"]
+[ext_resource type="Script" uid="uid://b0gftyfkumm4d" path="res://scripts/components/health.gd" id="2"]
 
 [sub_resource type="CapsuleShape3D" id="CapsuleShape_body"]
 radius = 0.35
 height = 1.8
 
-[node name="Player" type="CharacterBody3D"]
+[node name="Player" type="CharacterBody3D" unique_id=910868565]
 script = ExtResource("1")
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="."]
+[node name="CollisionShape3D" type="CollisionShape3D" parent="." unique_id=1225845400]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.9, 0)
 shape = SubResource("CapsuleShape_body")
 
-[node name="Health" type="Node" parent="."]
+[node name="Health" type="Node" parent="." unique_id=122720528]
 script = ExtResource("2")
-max_hp = 100

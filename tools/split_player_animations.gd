@@ -12,7 +12,11 @@ extends SceneTree
 const MODEL_PATH := "res://assets/characters/player_knight/player_knight.glb"
 const OUT_DIR := "res://assets/characters/player_knight/animations"
 const FPS := 24.0                      # 源动画的帧率（Blender 导出时按 24fps 烘焙）
-const LOOP_HINTS := ["walk", "air"]    # 名字命中这些关键词的动画按"循环"处理
+## 名字命中这些关键词的动画按"循环"处理（首尾帧姿势相同 → 需要裁掉末尾重复帧 + 开循环）。
+## 注意 blockhold / idle 必须列在这里：它们的名字里既没有 walk 也没有 air，
+## 漏掉的话导出的 block_hold.tres / idle.tres 会是"单次播放"，编辑器里预览循环会一顿一顿
+## （游戏内不受影响 —— player.gd 的 _set_loop() 会在运行时把 loop_mode 打开）。
+const LOOP_HINTS := ["walk", "air", "blockhold", "idle"]
 
 func _init() -> void:
 	if not ResourceLoader.exists(MODEL_PATH):

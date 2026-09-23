@@ -1,0 +1,85 @@
+# ==========================================================
+# 军需官 · 对话脚本（.dlg 纯文本，不是 Godot 资源）
+# ==========================================================
+# 语法速查：
+#   # 注释行（整行以 # 开头）
+#   @node_id                节点声明；@start 是入口，end 是"关闭对话"
+#   说话人: 台词             一个节点的台词（说话人 3~12 字符、不含空格才被识别）
+#   说话人: 第二句            同一节点连写多行 → 拼接成一段显示
+#   - 选项文本 [条件] -> 目标  选项；条件与箭头都可省略（省略目标 = 选了就结束）
+#   [accept q_guards]       进入本节点时执行的动作
+#   => end                  没有选项时的默认去向
+#
+# 可用条件（谓词 参数；多个谓词用 & 连接表示"且"）：
+#   [quest_not_taken q_guards]                    任务还没接过
+#   [quest_active q_guards]                       任务进行中
+#   [quest_ready q_guards]                        目标已达成、可以交付
+#   [quest_done q_guards]                         目标已达成或已交付
+#   [quest_done q_guards & quest_not_taken q_x]   组合条件：且
+#   [has guard_insignia 3]                        历史累计拾取过 3 个某物品
+#
+# 可用动作：
+#   [accept <quest_id>]          接取任务
+#   [complete <quest_id>]        交付任务（发奖励）
+#
+# 【编排要点】@start 里挂着 7 个选项，但**任何时刻最多只亮 3 个** ——
+#   每个分支都由任务状态把关。这就是"对话跟着剧情进度走"的全部机制：
+#   不需要 if/else，只需要给每个选项写对条件。
+# ==========================================================
+
+@start
+军需官: 又一位骑士？看你这一身伤，是刚从北边林地回来的吧。
+- 这边有什么需要帮忙的吗？ [quest_not_taken q_guards] -> offer
+- 悬赏我还在办。 [quest_active q_guards] -> remind
+- 徽记我带回来了。 [quest_ready q_guards] -> turnin
+- 残部我还在清。 [quest_active q_aftermath] -> remind2
+- 残部也清干净了。 [quest_ready q_aftermath] -> turnin2
+- 还有别的活儿吗？ [quest_done q_guards & quest_not_taken q_aftermath] -> offer2
+- 没什么，我先走了。 -> end
+
+# ---------------------- 第一章：肃清守卫 ----------------------
+
+@offer
+军需官: 北边林地那伙红甲守卫，最近把商道堵得死死的。
+军需官: 替我清掉他们，再带三枚他们的徽记回来 —— 我总得有个凭据去交差。
+- 交给我。 -> accept
+- 我再想想。 -> end
+
+@accept
+[accept q_guards]
+军需官: 好！他们就在林地中央，棒槌抡起来可不讲道理，别硬接。
+- 我这就去。 -> end
+
+@remind
+军需官: 悬赏还算数。三枚徽记，一枚都不能少。
+=> end
+
+@turnin
+[complete q_guards]
+军需官: 干得漂亮！这下商队能过冬了。
+军需官: 拿去吧，这是说好的报酬。
+- 多谢。 -> end
+
+# ---------------------- 第二章：扫荡残部 ----------------------
+# 这一段只有在 q_guards **交付之后**才可能被看见
+# （@start 里那个选项的条件是 quest_done q_guards & quest_not_taken q_aftermath）
+
+@offer2
+军需官: 有。那伙守卫的头目还带着残部缩在林地深处。
+军需官: 再清掉四只，报酬我给你加倍。
+- 我去。 -> accept2
+- 改天吧。 -> end
+
+@accept2
+[accept q_aftermath]
+军需官: 够意思。他们现在警惕多了，别再硬接棒槌。
+=> end
+
+@remind2
+军需官: 别急，那伙人不好啃。清完再来找我。
+=> end
+
+@turnin2
+[complete q_aftermath]
+军需官: 林地总算清净了。这份报酬你拿着 —— 商队欠你一个人情。
+=> end

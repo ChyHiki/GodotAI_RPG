@@ -1,7 +1,8 @@
-[gd_scene load_steps=4 format=3]
+[gd_scene load_steps=5 format=3]
 
 [ext_resource type="Script" path="res://scripts/enemy/enemy.gd" id="1"]
 [ext_resource type="Script" path="res://scripts/components/health.gd" id="2"]
+[ext_resource type="Script" path="res://scripts/components/poise.gd" id="3"]
 
 [sub_resource type="CapsuleShape3D" id="CapsuleShape_body"]
 radius = 0.55
@@ -17,3 +18,8 @@ shape = SubResource("CapsuleShape_body")
 [node name="Health" type="Node" parent="."]
 script = ExtResource("2")
 max_hp = 100
+
+[node name="Poise" type="Node" parent="."]
+script = ExtResource("3")
+max_poise = 100.0
+break_time = 3.0

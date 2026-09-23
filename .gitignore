@@ -7,3 +7,14 @@ TestCode/
 tmp_inspect_old/
 .tmp_cap/
 .tmp_anim/
+
+# Blender 无头运行的日志 / 中间产物（跑建模脚本时会落在项目根目录）
+.tmp_*
+
+# AI 工作数据 / 本地记忆（只在本机用，不入库）
+.workbuddy/
+
+# 开发过程预览图（引擎/Blender 抓帧产物，合计 ~24MB，不入库）
+# 本地文件保留、文档（README/GAME_DESIGN）里的文字描述仍在，只是仓库里不带图
+docs/preview*
+assets/**/previews/
