@@ -60,6 +60,16 @@ var _shake_phase: float = 0.0
 ## 真正的"眼睛"节点（_ready 里生成）。震动就加在它身上。
 var _cam: Camera3D = null
 
+## 相机默认视野(度)。★ 分镜导演(见 cinematic_director.gd)会在特写期间临时改动 _cam.fov，
+##   交还控制权时必须复位回这个值 —— 否则处决结束后画面会一直停在那把"长焦特写"的视野上。
+const DEFAULT_FOV: float = 70.0
+
+## 特写接管开关：true = 暂停"追尾写位姿"，改由分镜导演逐帧写位姿。
+## 【为什么用一位开关而不是 set_process(false)】本节点每帧还要跑 _apply_shake（命中震动）；
+##   直接停掉 _process 会把震动的收尾一起冻住。这里只掐掉"追尾写位姿"这一段，
+##   震动、鼠标输入各自另有关口（见 _apply_shake / _input）。
+var driven: bool = false
+
 ## 当前偏航角（绕 Y 轴），初始 0 = 镜头在角色正后方（角色默认朝 -Z）
 var yaw: float = 0.0
 ## 当前俯仰角（弧度），初始约 26°
@@ -79,7 +89,7 @@ func _ready() -> void:
 	#   屏幕只剩 UI——这是 M1 早期"画面全空"bug 的根源。
 	var cam := Camera3D.new()
 	cam.name = "Camera"
-	cam.fov = 70.0         # 视野角度（度），越大看得越广
+	cam.fov = DEFAULT_FOV  # 视野角度（度），越大看得越广
 	cam.near = 0.05        # 近裁剪面（防近处穿模）
 	cam.far = 300.0        # 远裁剪面
 	add_child(cam)
@@ -113,6 +123,10 @@ func _snap_to_target() -> void:
 ## 用 _input(而不是 _unhandled_input)：_input 对每个原始事件最先触发，
 ## 即使某个 UI 控件吃掉事件，环绕也不会失灵。
 func _input(event: InputEvent) -> void:
+	# ★ 特写接管期间不接受鼠标转镜头：导演正在逐帧写死位姿，玩家的鼠标输入会被下一帧覆盖，
+	#   表现为"镜头没反应"或"乱抖"。这里直接屏蔽，交还后自动恢复。
+	if driven:
+		return
 	if Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
 		return
 	if event is InputEventMouseMotion:
@@ -133,6 +147,10 @@ func _input(event: InputEvent) -> void:
 ## 每帧：平滑地把镜头推向期望位置，并始终注视玩家。
 func _process(delta: float) -> void:
 	_apply_shake(delta)              # 先处理震动偏移（与 target 无关，放在 early-return 之前）
+	# ★ 特写接管：震动处理完之后再交权。震动加在子节点 _cam 的局部偏移上、导演写父节点位姿，
+	#   两者作用于不同层级、天然互不干扰 —— 于是"处决命中那一下的镜头震动"照常生效。
+	if driven:
+		return
 	if target == null:
 		return
 	# 锁定中：先把 yaw 平滑转到"玩家 → 敌人"的方位，镜头就自动绕到玩家背后、正对敌人。
@@ -195,6 +213,59 @@ func shake(amount: float, duration: float) -> void:
 ## 对外查询：当前震动振幅（0 = 没在抖）。自动测试据此断言"命中真的震了镜头"。
 func get_shake_amount() -> float:
 	return _shake_amount if _shake_left > 0.0 else 0.0
+
+
+## 对外查询：当前子相机的视野角度。分镜导演进场时用它记基准、退场时复位。
+func get_fov() -> float:
+	return _cam.fov if _cam != null else DEFAULT_FOV
+
+
+# ------------------------------------------------------------------
+# 特写接管（由分镜导演调用，见 cinematic_director.gd）
+# ------------------------------------------------------------------
+
+## 外部（分镜导演）逐帧写入位姿与 fov。
+## 【为什么要把 _current_pos / _current_look 一起同步】它们本是"追尾平滑缓冲"：
+##   交还控制权后 _process 会从这两个缓冲继续向期望位置缓动。若不在这里同步成"导演当前的位姿"，
+##   交还瞬间缓冲里还留着"特写之前的旧值" → 镜头会猛地弹回旧位置（这就是"弹回"）。
+## @param pos     相机世界坐标
+## @param look    注视点世界坐标
+## @param fov_deg 视野角度(度)
+func apply_driven_pose(pos: Vector3, look: Vector3, fov_deg: float) -> void:
+	driven = true
+	global_position = pos
+	_current_pos = pos
+	_current_look = look
+	if _cam != null:
+		_cam.fov = fov_deg
+	# 注视点与相机重合时 look_at 会报错，做个最小距离保护（同 _process 里的写法）。
+	if pos.distance_to(look) > 0.05:
+		look_at(look, Vector3.UP)
+
+
+## 交还控制权（处决结束 / 目标失效 / 导演被销毁时调用）。★ 必须随时可安全调用。
+## 【为什么要反推 yaw / pitch】追尾 rig 的期望位置由 (yaw, pitch) 球坐标算出
+##   （见 _wanted_position）。特写期间相机被导演搬到了一个 yaw/pitch 表达不了的位姿，
+##   若直接交还、不更新这两个角，下一帧追尾会按"特写之前的旧角度"重算期望位置 →
+##   镜头在特写结束瞬间大幅摆回去。从**当前实际位姿**反推 yaw/pitch，追尾就能从当前位置无缝续上。
+##   推导：_wanted_position 中 off = raw - look = UP*(d·sin p) - fwd*(d·cos p)，
+##   而 fwd = (-sin yaw, 0, -cos yaw) → off 的水平分量 = (d·cos p)·(sin yaw, 0, cos yaw)。
+func release_driven() -> void:
+	driven = false
+	# ★ 把 fov 复位回默认：导演可能在特写里用了 36° 长焦，交还后必须回到 70°。
+	if _cam != null:
+		_cam.fov = DEFAULT_FOV
+	if not is_instance_valid(target):
+		return
+	var look := target.global_position + Vector3.UP * look_height
+	var off := global_position - look
+	var off_h := Vector3(off.x, 0.0, off.z)
+	# atan2(x, z) 与 _wanted_position 的 fwd=(-sin,0,-cos) 约定一致（推导见上方注释）。
+	yaw = atan2(off_h.x, off_h.z)
+	pitch = clampf(atan2(off.y, off_h.length()), min_pitch, max_pitch)
+	# 同步平滑缓冲 → 追尾从"现在这个位姿"无缝续上，而不是从特写前的旧值弹回。
+	_current_pos = global_position
+	_current_look = look
 
 
 ## 把震动施加到子节点相机的**局部偏移**上（原因见 _shake_amount 的声明注释）。

@@ -307,6 +307,32 @@ const SFX_HIT := "res://assets/audio/sfx/hit_impact.wav"
 ## >0 = 手动固定倍速（只在想手动微调演出快慢时才填）。
 @export var execute_anim_speed: float = 0.0
 
+## —— 处决电影化特写（命中慢动作 + 可选顿帧）——
+## 【慢动作】处决命中那一刻把全局时间压慢，把"这一刀"的主观时间拉长 —— 这是电影化最核心的一味。
+##   复用既有的子弹时间机制（_start_bullet_time），只是换一组更慢更久的参数：
+##   完美闪避的 0.45/0.25/0.25 是"瞥一眼"，处决的 0.35/0.28/0.40 是"定格欣赏"。
+## 【为什么用真实秒保持】三个值都由 _start_bullet_time 用 set_ignore_time_scale 的补间驱动，
+##   所以不受减速本身影响 —— hold=0.28 就是实打实的 0.28 秒，改时间倍率不会把它拖长。
+## 【倍率为什么是 0.35 而不是更狠】0.35 仍能看清处决动画的"前刺→上划"，再慢就成 PPT 了；
+##   分镜导演的时间轴也吃这个倍率（见 cinematic_director.gd），两者同步推进。
+@export var cinematic_slowmo_scale: float = 0.35   # 处决命中时的慢动作倍率(1.0=常速)
+@export var cinematic_slowmo_hold: float = 0.28    # 减速保持时长(真实秒)
+@export var cinematic_slowmo_fade: float = 0.40    # 从减速平滑回到常速的过渡时长(真实秒)
+
+## 处决命中可选的**顿帧**时长(真实秒)。**默认 0 = 关**。
+## 【为什么默认关】顿帧会改变处决的打击节奏（命中瞬间几乎定格）——那是另一套打击感偏好，
+##   属于**可选的表现加强**，不该默认叠在所有人身上。调成 0.11 就是收尾重击那种"顿"一下。
+##   （本项目惯例：功能性表现一律带开关、并在注释里点明"打开会发生什么"。）
+@export var execute_hitstop: float = 0.0
+
+## 处决命中瞬间的**镜头震屏**振幅与时长。
+## ★ 对齐三段连击的"收尾重击"强度（shake_finisher = 0.085 / shake_time = 0.16）。
+## 【为什么默认开】处决是比普通挥砍更重的高光动作，而且特写拉近后没有冲击反馈会显得很"飘" ——
+##   三段连击的命中反馈是「顿帧 + 震屏 + 音效」三件套，处决作为更重的收尾不该少了震屏这一味。
+##   设成 0 即关闭（本项目惯例：表现类功能留开关）。
+@export var execute_shake: float = 0.085
+@export var execute_shake_time: float = 0.16
+
 ## —— 跳跃手感（数值都在编辑器里可调）——
 @export var jump_velocity: float = 7.4            # 起跳初速度(米/秒)；最高点 ≈ v²/(2g) ≈ 1.1m
 @export var jump_cut_multiplier: float = 2.0      # 上升中松开跳跃键时的额外重力倍数 → 轻点=小跳
@@ -1081,6 +1107,13 @@ func _try_start_execute(target: Node3D) -> void:
 		_anim_player.play(clip, -1.0, spd)
 	# 起手就先迸一层金光，明确告诉玩家"这一下是处决"
 	HitFlash.spawn(self, _effect_point(), Color(1.0, 0.86, 0.3), 1.1, 0.32, 6.0)
+	# ★ 交给"电影化分镜导演"接管相机：特写运镜 + 上下遮幅黑边（见 cinematic_director.gd）。
+	#   导演是自包含的（自己找相机、自建遮幅），这里只需把时长与两个锚点演员交给它。
+	# ⚠️ **优雅降级**：自动测试 / 裸场景里可能根本没有这个节点 —— 取不到导演就让处决照常演完，
+	#    绝不能因为"导演不在"而让处决本身出问题（这是本项目对"可缺组件"的一贯态度）。
+	var director := get_tree().get_first_node_in_group("cinematic") as CinematicDirector
+	if director != null:
+		director.play(CinematicDirector.EXECUTE_SHOTS, execute_time, self, target)
 
 
 ## 特效挂载点：优先挂在当前场景根下，取不到就退回自己的父节点。
@@ -1113,9 +1146,30 @@ func _execute_strike() -> void:
 		target.execute(execute_damage, global_position)   # 敌人侧负责乘 execute_damage_scale
 	elif target.has_method("take_damage"):
 		target.take_damage(execute_damage, global_position)  # 没实现 execute 的敌人就按普通伤害打
-	# 命中处的金色爆闪：比完美格挡更大更亮，作为"处决成立"的强反馈
+	# 命中处的金色爆闪：处决成立的强反馈，但要**收敛到"近景机位下不糊屏"**。
+	# 【为什么收敛到 0.95 / 0.30 / 7.5】第 2 刀改成过肩近景后（dist 3.6 / fov 50），锚点处
+	#   画面可视高度 = 2×3.6×tan(25°) ≈ 3.36m。原半径 1.4（直径 2.8m）≈ 画面高度的 83%，
+	#   又是 UNSHADED + 加法混合的亮球 → "剑砍进敌人"这一拍被整块糊掉。
+	#   收敛后直径 1.9m ≈ 画面高度 57%：仍是全场最亮的金爆闪、仍是"处决成立"的主反馈，
+	#   但不再糊满全屏；时长 0.45→0.30 让它在近景的两三帧内起爆并开始消散，不盖住敌人受击反应。
+	#   （原 1.4/0.45/9.0 是第三人称 4~5m 视距下的量，近距离特写下偏大。）
 	HitFlash.spawn(_vfx_root(), target.global_position + Vector3(0, 1.1, 0),
-		Color(1.0, 0.8, 0.25), 1.4, 0.45, 9.0)
+		Color(1.0, 0.8, 0.25), 0.95, 0.30, 7.5)
+	# ★ 命中这一刻触发"处决慢动作"：把全局时间压到 cinematic_slowmo_scale 倍，
+	#   保持 cinematic_slowmo_hold 真实秒后平滑回升（复用子弹时间那套 _start_bullet_time）。
+	# ★ 时间点天然对齐：execute_hit_time(0.32) 正是分镜第 2 刀的硬切点 —— 切到近景的同一帧，
+	#   时间恰好慢下来，"这一刀"被拉长成电影式的特写。
+	_start_bullet_time(cinematic_slowmo_scale, cinematic_slowmo_hold, cinematic_slowmo_fade)
+	# 可选顿帧：默认 0（关）→ 不改处决现有打击节奏；调成 0.11 就是收尾重击那种"顿"一下。
+	if execute_hitstop > 0.0:
+		_start_hitstop(execute_hitstop)
+	# ★ 命中瞬间的镜头震屏：处决比普通挥砍更重，特写拉近后没有冲击反馈会显得"飘"。
+	#   强度对齐三段连击的收尾重击（execute_shake 0.085 / 0.16）。execute_shake = 0 即关闭。
+	#   ⚠️ 震动加在相机的**子节点**偏移上（见 third_person_camera.gd::_apply_shake），
+	#      与分镜导演写父节点位姿互不干扰 —— 所以特写期间这一下震屏照样看得见。
+	var cam := get_tree().get_first_node_in_group("camera")
+	if cam != null and execute_shake > 0.0 and cam.has_method("shake"):
+		cam.shake(execute_shake, execute_shake_time)
 
 
 ## 收招：解除无敌、回到移动状态、给一点攻击冷却（防止处决完立刻又挥一刀）。
@@ -1137,6 +1191,11 @@ func _end_execute() -> void:
 	_execute_hit_done = false
 	_attack_cooldown = maxf(_attack_cooldown, attack_cd)
 	_pivot.rotation.x = 0.0
+	# ★ 收招：让分镜导演停止并交还相机（遮幅滑出、fov 复位、追尾从当前位置无缝续上）。
+	#   同样优雅降级："cinematic" 组里没有导演时静默跳过。
+	var director := get_tree().get_first_node_in_group("cinematic") as CinematicDirector
+	if director != null:
+		director.stop()
 
 
 ## 玩家身体中心（特效生成点）：胸口高度略偏前，让闪光看起来"从身上迸出来"。
@@ -1595,15 +1654,19 @@ func _trigger_perfect_dodge(_from_pos: Vector3) -> void:
 ##   实际减速时长会被拉长成 duration / time_scale（0.6s 变 1.7s），节奏完全失控。
 ##   Tween.set_ignore_time_scale(true) 就是官方提供的"这条件不受 time_scale 影响"开关。
 ## 【为什么要 kill 上一条件】连续完美闪避时，旧补间到点会把新减速一起拉回 1.0。
-func _start_bullet_time() -> void:
+## 【参数化（2026 新增）】三个参数默认沿用**完美闪避**那组值 → 完美闪避的调用点一个字都不用改；
+##   处决慢动作（更慢更久）与闪避共存于同一套机制，只是传不同的参数进来（见 _execute_strike）。
+##   默认值引用实例成员，GDScript 会在**调用时**求值 —— 调用方不传就走当下的 @export 值。
+## @param scale 减速倍率(1.0=常速)；hold 保持时长(真实秒)；fade 回升过渡时长(真实秒)
+func _start_bullet_time(scale := bullet_time_scale, hold := bullet_time_duration, fade := bullet_time_fade) -> void:
 	if _bullet_time_tween != null and _bullet_time_tween.is_valid():
 		_bullet_time_tween.kill()
-	_bt_factor = bullet_time_scale           # 只改"自己这一份"因子 → 不会踩掉正在进行的顿帧
+	_bt_factor = scale                      # 只改"自己这一份"因子 → 不会踩掉正在进行的顿帧
 	_push_time_scale()
 	_bullet_time_tween = create_tween()
 	_bullet_time_tween.set_ignore_time_scale(true)      # ★ 关键：别被自己造成的减速拖慢
-	_bullet_time_tween.tween_interval(bullet_time_duration)
-	_bullet_time_tween.tween_method(_set_bullet_factor, bullet_time_scale, 1.0, bullet_time_fade)
+	_bullet_time_tween.tween_interval(hold)
+	_bullet_time_tween.tween_method(_set_bullet_factor, scale, 1.0, fade)
 
 
 ## 子弹时间因子的写入口（由上面的补间逐帧调用）。

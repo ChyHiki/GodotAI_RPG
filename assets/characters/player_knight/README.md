@@ -8,7 +8,7 @@
 
 | 路径 | 内容 |
 | --- | --- |
-| `player_knight.glb` | 绑定好的模型：**5 个网格** + 21 根骨骼（Skin）+ **19 段动画**（剑**不在**里面，见下。其中 `RollLeap` 已停用，见 `DodgeForward`/`DodgeBack`；`Slash2`/`Slash3` 是 2026-09-21 新增的三段连击 2/3 段） |
+| `player_knight.glb` | 绑定好的模型：**5 个网格** + 21 根骨骼（Skin）+ **19 段动画**（剑**不在**里面，见下。★ **已取消/停用、但仍保留在 GLB 与 `animations/` 里的两段"开关"**：`RollLeap`（翻滚已被**前冲/后撤闪避**取代，键位让给 Shift）、`JumpStart`（起跳动画已取消，把 `jump_prep_time` 调回 >0 即可恢复）—— 按本项目惯例保留、不当残骸删；`Slash2`/`Slash3` 是 2026-09-21 新增的三段连击 2/3 段） |
 | `animations/` | 从 GLB 抽出的独立动画资源（`*.tres`），便于预览/复用（由 `tools/split_player_animations.gd` 生成） |
 | `previews/` | 各动画代表帧。**行走含左右两步 + 侧视**：`walk_side_01_contact_R.png`（右步触地）、`walk_side_07_passing_R.png`、`walk_side_13_contact_L.png`（左步触地）、`walk_side_19_passing_L.png`，另有斜视 `walk_01_contact_R.png` / `walk_13_contact_L.png`；**格挡**：`block_03_raise.png`（起手过半）、`block_07_guard.png`（防护架势）、`hold_01_guard.png` / `hold_13_breath.png`（举剑待机）、`impact_03_recoil.png`（挡下顿挫）；**锁定侧移**：`strafe_left_13_open.png`（开到最大的站姿，正视）、`strafe_left_07_lead_lift.png`（斜视）、`strafe_left_side_07/19.png`（侧视，看摆腿是"原地抬膝"而非后甩）、`strafe_right_13_open.png`、`walk_back_side_07.png`；**闪避**：`dodge_forward_side_01_start.png` / `dodge_forward_side_06_peak.png`（前冲：后腿蹬直、躯干前压）、`dodge_back_side_01_start.png` / `dodge_back_side_08_peak.png`（后撤：剪式腿——前膝抬起、后腿后伸、躯干后倾）；**引擎内实拍**：`lockon_00_free_walk.png`（未锁定：身体扭向移动方向）、`lockon_01_camera_behind.png`（锁定：镜头绕到背后正对敌人）、`lockon_02_strafe_left.png` / `lockon_03_strafe_right.png`（身体保持朝敌人横移）、`lockon_04_marker_body_center.png` / `lockon_05_marker_zoom.png`（**锁定标记**：敌人身体中心的白色亮点，后一张是同帧放大） |
 
@@ -282,7 +282,7 @@ Godot_v4.7.2-stable_win64.exe --headless --path . --import
 【为什么】Godot 的导入产物缓存在 `.godot/imported/player_knight.glb-<hash>.scn`，
 而**非编辑器运行（`--headless <scene>` / `--script`）不会自动重新导入**。
 直接跑测试/游戏会拿到上一次导入的旧动画列表，表现为"新加的动画一个都认不出来"
-（本项目真踩过：GLB 里明明有 12 段动画，测试却报 5 段、格挡断言全红）。
+（本项目真踩过：GLB 里明明有 12 段动画，测试却报 5 段、格挡断言全红 —— **当时是 12 段，现为 19 段**，见 L11）。
 判据：对比 `player_knight.glb` 与 `.godot/imported/player_knight.glb-*.scn` 的修改时间。
 建议随后跑一次 `tools/split_player_animations.gd`，把新动画同步进 `animations/*.tres`。
 
@@ -292,7 +292,7 @@ Godot_v4.7.2-stable_win64.exe --headless --path . --import
 Godot_v4.7.2-stable_win64.exe --headless --path . res://tools/autotest/m1_autotest.tscn
 ```
 
-退出码 0 = 全部通过（当前共 **305 条断言**）。另有**独立的输入边沿对抗性探针** `tools/autotest/lock_toggle_probe.tscn`（62 条断言），覆盖长按中键只翻转一次、仅松开不解锁、奇偶翻转、范围外点击不自锁、目标销毁 / 死亡退化与重找等边界。相关断言覆盖：
+退出码 0 = 全部通过（当前共 **339 条断言**）。另有**独立的输入边沿对抗性探针** `tools/autotest/lock_toggle_probe.tscn`（62 条断言），覆盖长按中键只翻转一次、仅松开不解锁、奇偶翻转、范围外点击不自锁、目标销毁 / 死亡退化与重找等边界。相关断言覆盖：
 Idle/Hurt/Death 三段生活动画的识别 + 时长（设计时长 + 1/24）+ 循环开闭 + 播放倍速（`get_playing_speed()`）+ 
 Idle 首尾帧姿态闭环（差 < 0.02 rad）+ 死亡末帧**不复位**（尸体定住，root 俯角 > 60°）、
 **闪避两段**（有方向键 = `DodgeForward` 且**转向该方向**、单按 Shift = `DodgeBack`；

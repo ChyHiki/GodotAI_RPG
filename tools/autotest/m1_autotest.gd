@@ -405,6 +405,7 @@ func _run() -> void:
     var saw_air_anim := false
     var launched := false
     var double_jump_blocked := true
+    var double_checked := false               # ★ 是否真的采到了「滞空时刻」（见下方响亮守卫）
     var saw_jump_start := false                      # ★ 全程有没有漏播过一次起跳动画
     for i in 55:                                     # 约 1.1s（已无 0.18s 蓄力）
         await _wait(0.02)
@@ -415,7 +416,19 @@ func _run() -> void:
             saw_air_anim = true
         if player._jump_start_anim != "" and player._anim_player.current_animation == player._jump_start_anim:
             saw_jump_start = true
-        if i == 25:                                  # 约 0.5s：人在空中
+        # ★ ★ 「空中不能二段跳」的采样**按条件触发，不按循环计数**。
+        #   2026-09-24 修：原来写 `if i == 25`，注释写"约 0.5s：人在空中"——但每轮真实耗时
+        #   = _wait(0.02) + 一帧时长，所以"第 25 次 ≈ 0.5s"**只在机器很快时成立**。
+        #   滞空 = 2 × jump_velocity / GRAVITY ≈ 0.617s；机器一被压，第 25 次就漂过落地时刻，
+        #   那一按成了**合法的新起跳**（is_on_floor() 为真）→ velocity.y 跃到 jump_velocity
+        #   → 断言**假失败**（实测同一份代码：本机 4/4 通过、另一台 3/3 失败）。
+        #   改成"确认人确实在空中就触发一次"后，与帧率/负载无关。
+        # ⚠️ ★ 块内第一行必须**真的置位 double_checked**：2026-09-24 我把本项从"按循环计数"
+        #   改成"按条件触发"时漏写了这一行 —— 条件其实**每次都成立**、块也每次都进了，
+        #   但标志永远是 false → 「二段跳检测」**实际没跑**，而全套测试还绿着。
+        #   正是下面那条响亮守卫把它抓出来的（守卫 4/4 FAIL）。这就是它存在的理由。
+        if not double_checked and not player.is_on_floor() and player.global_position.y > gy_before + 0.30:
+            double_checked = true               # ★ 置位：本块只跑一次
             var vy_air: float = player.velocity.y
             player._try_start_jump()                 # 空中再按 → 不应生效
             await _wait(0.02)
@@ -425,6 +438,9 @@ func _run() -> void:
     _expect(saw_air_anim, "滞空阶段播放 %s" % player._jump_air_anim)
     _expect(not saw_jump_start,
         "★ 整段跳跃全程没有播放起跳动画 %s（起跳动画已取消）" % player._jump_start_anim)
+    # ★ 响亮守卫：万一循环一次都没采到滞空窗口（极端负载），double_jump_blocked 会保持初值
+    #   true 而**静默通过** —— 那比原来的假失败更糟。所以显式断言"确实采到了"。
+    _expect(double_checked, "采样到了滞空时刻用于「空中不能二段跳」检测（否则本项等于没测）")
     _expect(double_jump_blocked, "空中不能二段跳")
     var full_h: float = full_peak - gy_before
     _expect(full_h > 0.9 and full_h < 1.6, "按住跳跃的高度约 1.1m，实际 %.2fm" % full_h)
@@ -735,6 +751,178 @@ func _run() -> void:
     player.health.reset()
     player._iframes = 0.0
     await _wait(0.2)
+
+    # ---- 1f-2) 处决电影化特写分镜：导演接管相机 + 相对取景切镜 + 遮幅黑边 ----
+    # 【测什么】新增的 CinematicDirector 层（scripts/camera/cinematic_director.gd）：
+    #   ① 处决起手 → 导演 is_active()、相机进入 driven 接管态；
+    #   ② 特写期间 fov 被改成"长焦"、上下遮幅黑边可见且高度 > 0；
+    #   ③ 分镜按归一化时间推进 → 命中切点前后机位不同（硬切）；
+    #   ④ ★★ 处决结束**不弹回**：交还后反推 yaw/pitch 与追尾实际记录一致，且 _wanted_position 与实际重合；
+    #   ⑤ 遮幅收起、fov 复位 70；
+    #   ⑥ ★ 目标中途失效 → 安全退出（导演/相机都交还、处决提前收招）；
+    #   ⑦ ★ 场景里没有导演时优雅降级：处决照常跑完。
+    # ⚠️ 本段会触发处决慢动作（命中），结尾必须把 Engine.time_scale 复位 —— 否则后续章节计时全乱。
+    Engine.time_scale = 1.0
+    var director: Node = get_tree().get_first_node_in_group("cinematic")
+    var camera = get_tree().get_first_node_in_group("camera")
+    _expect(director != null, "[分镜] 主场景已装配 CinematicDirector(cinematic 组)")
+    _expect(camera != null, "[分镜] 找到追尾相机(camera 组)")
+    if director != null and camera != null:
+        var cam3d: Camera3D = camera.get("_cam") as Camera3D
+        _expect(cam3d != null, "[分镜] 相机脚本持有子节点 Camera3D 引用(_cam)")
+
+        # 专属被动木桩（同 1f：隔离，别动主场景那只怪的复活/重生线）
+        var cine_probe: EnemyBrute = probe_scene.instantiate()
+        main.add_child(cine_probe)
+        cine_probe.global_position = player.global_position + Vector3(0, 0, -30)
+        cine_probe.aggro_range = 0.0
+        cine_probe.attack_range = 0.0
+        cine_probe.move_speed = 0.0
+        await _wait(0.15)
+
+        # 起一次标准处决
+        _break_probe(cine_probe)
+        _place_enemy_in_front_of(cine_probe, player, 1.3)
+        _face_player_to(player, Vector3(0, 0, -1))
+        player.health.reset()
+        player.health.invincible = false
+        player._attack_cooldown = 0.0
+        await _wait(0.1)
+        var fov_before: float = cam3d.fov
+        player._try_start_attack()
+
+        # ① 导演接管 + 相机 driven
+        _expect(player.state == PlayerCharacter.State.EXECUTE, "[分镜] 处决已进入 EXECUTE")
+        _expect(director.is_active(), "[分镜] 处决起手后导演接管相机(is_active == true)")
+        _expect(bool(camera.get("driven")), "[分镜] 处决起手后相机进入 driven 接管态")
+
+        # 记下"全景刀"时刻的机位（t≈0.12，仍在第 1 刀 0.00~0.32 内）
+        await _wait(0.12)
+        var pose_wide: Vector3 = camera.global_position
+        # ② 特写期间 fov 已被改动 + 遮幅黑边可见
+        _expect(not is_equal_approx(cam3d.fov, fov_before),
+            "[分镜] 特写期间相机 fov 被改动(%.1f → %.1f)" % [fov_before, cam3d.fov])
+        var bar_top: ColorRect = director.get("_bar_top")
+        var bar_bottom: ColorRect = director.get("_bar_bottom")
+        _expect(bar_top != null and bar_top.visible and bar_top.size.y > 0.0,
+            "[分镜] 遮幅上黑边可见且高度 >0(%.1fpx)" % (bar_top.size.y if bar_top != null else -1.0))
+        _expect(bar_bottom != null and bar_bottom.visible and bar_bottom.size.y > 0.0,
+            "[分镜] 遮幅下黑边可见且高度 >0")
+        # ③ 遮幅必须是"纯黑 + 压在 HUD 之下的 0 层"（只查 size.y>0 太弱，这里钉死颜色与层级）
+        _expect(bar_top != null and bar_top.color == Color(0, 0, 0, 1),
+            "[分镜] 遮幅为纯黑 Color(0,0,0,1)")
+        var overlay_layer: CanvasLayer = director.get("_layer")
+        _expect(overlay_layer != null and overlay_layer.layer == 0,
+            "[分镜] 遮幅 CanvasLayer.layer == 0(3D 之上、HUD 之下)")
+        _expect(overlay_layer != null and overlay_layer.visible,
+            "[分镜] 遮幅 CanvasLayer 可见")
+
+        # ④ 慢动作 + 震屏：命中那一刻触发（★ 二者都只在命中帧生效，必须在这一刻查）
+        await _wait_execute_time(player, player.execute_hit_time + 0.06)
+        # 慢动作：全局时间被压慢。★ 用真实时间等它自己回升（下面），不能用被缩放的计时去等。
+        _expect(Engine.time_scale < 1.0,
+            "[分镜] 处决命中触发慢动作(Engine.time_scale %.3f < 1)" % Engine.time_scale)
+        # 震屏：处决命中那一帧相机的震动生效（get_shake_amount 是既有的"在没在抖"查询）
+        var shake_amt: float = camera.get_shake_amount()
+        _expect(shake_amt > 0.0, "[分镜] 处决命中触发镜头震屏(振幅 %.3f)" % shake_amt)
+
+        # ⑤ 分镜推进：越过命中切点(execute_hit_time)后应已硬切到"近景长焦刀"
+        var pose_close: Vector3 = camera.global_position
+        _expect(pose_wide.distance_to(pose_close) > 0.5,
+            "[分镜] 命中切点后机位改变(移动 %.2fm)" % pose_wide.distance_to(pose_close))
+        _expect(cam3d.fov < fov_before - 5.0,
+            "[分镜] 近景刀使用长焦(fov %.1f < %.1f)" % [cam3d.fov, fov_before])
+
+        # 等整段处决演完（含慢动作回升）
+        await _wait_execute_over(player)
+        _expect(player.state == PlayerCharacter.State.MOVE, "[分镜] 处决演完回到 MOVE")
+
+        # 慢动作**自行**回升到常速：按真实时间到点 → 必须用 _wait_real 等（被缩放的 _wait 会误导）
+        var ts_guard := 0
+        while not is_equal_approx(Engine.time_scale, 1.0) and ts_guard < 300:
+            await _wait_real(0.02)
+            ts_guard += 1
+        _expect(is_equal_approx(Engine.time_scale, 1.0),
+            "[分镜] 慢动作自行回升到常速(实际 %.3f)" % Engine.time_scale)
+
+        # ⑥ ★★ 不弹回（核心断言）。
+        #    【为什么这么测】release_driven 必须把"导演留下的特写位姿"反推成 yaw/pitch 并写回追尾，
+        #    否则追尾会按"特写之前的旧角度"重算期望位置 → 处决一结束镜头猛地摆回去（弹回）。
+        #    所以：在交还瞬间，用与 release_driven **同一套公式**从当前位姿反推 yaw/pitch，
+        #    应当与追尾实际持有的 yaw/pitch 基本一致（偏差很小）。
+        _expect(not bool(camera.get("driven")), "[分镜] 处决结束后相机交还控制权(driven == false)")
+        _expect(not director.is_active(), "[分镜] 处决结束后导演停止(is_active == false)")
+        var look_pt: Vector3 = player.global_position + Vector3.UP * camera.look_height
+        var off: Vector3 = camera.global_position - look_pt
+        var off_h := Vector3(off.x, 0.0, off.z)
+        var yaw_rt := atan2(off_h.x, off_h.z)
+        var pitch_rt := clampf(atan2(off.y, off_h.length()), camera.min_pitch, camera.max_pitch)
+        _expect(absf(camera.yaw - yaw_rt) < 0.06,
+            "★★ [分镜] 交还后 yaw 与反推一致(实际 %.3f / 反推 %.3f)" % [camera.yaw, yaw_rt])
+        _expect(absf(camera.pitch - pitch_rt) < 0.06,
+            "★★ [分镜] 交还后 pitch 与反推一致(实际 %.3f / 反推 %.3f)" % [camera.pitch, pitch_rt])
+
+        # 等追尾稳定后，用同套公式正算 _wanted_position()，应与实际位姿重合（< 0.35m）。
+        await _wait(0.4)
+        var want_pos: Vector3 = camera._wanted_position(look_pt)
+        var snap_err: float = camera.global_position.distance_to(want_pos)
+        _expect(snap_err < 0.35,
+            "★★ [分镜] 交还后 _wanted_position 与实际重合(偏差 %.3fm < 0.35)" % snap_err)
+
+        # ⑦ 遮幅收起 + fov 复位 70（遮幅滑出 0.15s 真实时间，等够）
+        await _wait(0.25)
+        _expect(bar_top.size.y < 1.0,
+            "[分镜] 处决结束后遮幅收起(高度 %.1fpx)" % bar_top.size.y)
+        _expect(is_equal_approx(cam3d.fov, 70.0),
+            "[分镜] 处决结束后 fov 复位 70(实际 %.1f)" % cam3d.fov)
+
+        # ⑧ ★ 目标中途失效 → 安全退出（不空演、相机交还）
+        _break_probe(cine_probe)
+        _place_enemy_in_front_of(cine_probe, player, 1.3)
+        _face_player_to(player, Vector3(0, 0, -1))
+        player.health.invincible = false
+        player._attack_cooldown = 0.0
+        await _wait(0.1)
+        player._try_start_attack()
+        _expect(player.state == PlayerCharacter.State.EXECUTE, "[分镜] 二次处决进入 EXECUTE")
+        await _wait(0.08)
+        _expect(director.is_active(), "[分镜] 二次处决导演已接管")
+        cine_probe.queue_free()                       # 目标中途失效
+        await _wait(0.25)                             # 让 _process 检测到失效 → _end_execute()
+        _expect(not director.is_active(), "★ [分镜] 目标失效 → 导演安全退出(is_active == false)")
+        _expect(not bool(camera.get("driven")), "★ [分镜] 目标失效 → 相机交还(driven == false)")
+        _expect(player.state == PlayerCharacter.State.MOVE, "★ [分镜] 目标失效 → 处决提前收招回 MOVE")
+
+        # ⑨ ★ 没有导演时优雅降级：临时把导演移出 "cinematic" 组 → 处决照常跑完
+        var probe2: EnemyBrute = probe_scene.instantiate()
+        main.add_child(probe2)
+        probe2.global_position = player.global_position + Vector3(0, 0, -30)
+        probe2.aggro_range = 0.0
+        probe2.attack_range = 0.0
+        probe2.move_speed = 0.0
+        await _wait(0.15)
+        _break_probe(probe2)
+        _place_enemy_in_front_of(probe2, player, 1.3)
+        _face_player_to(player, Vector3(0, 0, -1))
+        player.health.invincible = false
+        player._attack_cooldown = 0.0
+        await _wait(0.1)
+        director.remove_from_group("cinematic")       # 制造"场景里没有导演"的情形
+        player._try_start_attack()
+        _expect(player.state == PlayerCharacter.State.EXECUTE, "[分镜] 无导演时处决仍能起手")
+        await _wait_execute_over(player)
+        _expect(player.state == PlayerCharacter.State.MOVE,
+            "★ [分镜] 无导演时处决照常跑完(回到 MOVE)")
+        director.add_to_group("cinematic")            # 还原
+        probe2.queue_free()
+
+        # ⑩ ★ 复位全局时间倍率（处决命中触发过慢动作，不复位会拖乱后面所有章节的计时）
+        Engine.time_scale = 1.0
+        _expect(is_equal_approx(Engine.time_scale, 1.0), "[分镜] 全局时间倍率已复位为 1.0")
+        player.health.reset()
+        player.health.invincible = false
+        player._iframes = 0.0
+        await _wait(0.2)
 
     # ---- 1g) 生活三段（Idle / Hurt / Death）：站住有呼吸、挨打有甩身、倒地有扑倒 ----
     # 【为什么值得单独测】这三段以前是"骨骼复位 + 整体姿态"的权宜做法：站住时是绑定姿势
@@ -1458,6 +1646,35 @@ func _place_enemy_in_front_of(enemy: Node3D, player: Node3D, dist: float) -> voi
 func _face_player_to(player: Node3D, dir: Vector3) -> void:
     if player.has_method("_face_instant"):
         player._face_instant(dir)
+
+
+## 把木桩顶进失衡(BROKEN)：一次完美格挡直接顶满（100% 档），供处决测试提速。
+func _break_probe(probe) -> void:
+    probe.poise.reset()
+    probe.parry_poise_percent = 100.0
+    probe.deflect(0.2, probe.global_position + Vector3(0, 0, 1.0))
+
+
+## 等处决状态计时走到 t 秒（游戏时间），或提前离开 EXECUTE。
+## 【为什么盯 _state_time 而不是 `await _wait(t)`】慢动作/顿帧会压慢时间，
+##   自己算"该等多久"迟早错位；直接帧帧问"到了没"最稳。
+## @return 走到 t 时是否仍在 EXECUTE（false = 中途已退出）
+func _wait_execute_time(player, t: float, timeout_sec: float = 3.0) -> bool:
+    var guard := 0
+    var limit := int(timeout_sec * 240.0)
+    while player.state == PlayerCharacter.State.EXECUTE and float(player._state_time) < t and guard < limit:
+        await get_tree().physics_frame
+        guard += 1
+    return player.state == PlayerCharacter.State.EXECUTE
+
+
+## 等整段处决演完（离开 EXECUTE 状态），或超时返回。
+func _wait_execute_over(player, timeout_sec: float = 4.0) -> void:
+    var guard := 0
+    var limit := int(timeout_sec * 240.0)
+    while player.state == PlayerCharacter.State.EXECUTE and guard < limit:
+        await get_tree().physics_frame
+        guard += 1
 
 
 ## 把敌人摆到玩家"镜头正前方偏 deg 度"的位置（水平距离 dist 米）。

@@ -15,6 +15,8 @@
 - `preview_combo_poses.png` —— **三段连击九宫姿势条**（三段各取 起手/挥出/收招）：1 段举剑过顶→横扫至腰、2 段右手横斩、3 段回旋后过顶下劈，一眼看出三段**剪影互不相同**
 - `preview_combo_chain.gif` —— **整套三段连击动图**（引擎内实拍）：能直接看出"第 2/3 段是在前一段后摇里被掐出来接上的"、以及命中那一下的**顿帧定格**（横条看不出节奏，所以补了动图）
 - `preview_jump_instant.gif` —— **跳跃（起跳动画已取消后）**：按一下立即离地、直接进滞空循环。这一版专门用来确认"从站立直接切到 `JumpAir` 不会硬切"——实测 `JumpAir` 起始几帧贴近站立姿势，收腿是随后 1~2 帧演进去的
+- `preview_execute_cine.gif` —— **处决特写分镜动图**（引擎内实拍一次真实处决）：演员一动机位就跟着走（**相对取景**），三刀之间是**硬切** —— 0.00 全景交代 → 0.32 命中（过肩近景 + 慢动作）→ 0.62 拉回收招，全程上下**遮幅黑边**。★ "切镜"这件事只存在于帧与帧之间，静态图上根本读不出来，所以给了 GIF
+- `preview_execute_cine_poses.png` —— **分镜三刀代表帧横条**：用来确认三刀的**取景互不相同**、且第 2 刀近景能读出"剑砍进敌人"（GIF 看**切镜节奏**、横条看**逐刀取景**）
 - `lockon_04_marker_body_center.png` / `lockon_05_marker_zoom.png`（在 `assets/characters/player_knight/previews/`）
   —— **锁定标记**：点一次中键锁定后敌人**身体中心**出现一颗白色亮点（右图为同一帧放大；近白像素实测 20×20 px、再点一次解除后 0 个）
 
@@ -24,6 +26,8 @@
 > 连击两张由 `tools/anim_capture/combo_capture.tscn` 抓（第一幕逐段采姿势 → 用 `tools/img_probe/grid.py`
 > 拼成 `preview_combo_poses.png`；第二幕真一整套连击 → 用 `tools/img_probe/make_gif.py` 拼成 `preview_combo_chain.gif`）。
 > 跳跃那张由 `tools/anim_capture/jump_capture.tscn` 抓 → `preview_jump_instant.gif`。
+> 处决特写两张由 `tools/anim_capture/execute_cine_capture.tscn` 抓（真跑一次处决、让分镜导演驱动相机）→ 取关键帧用 `grid.py` 拼成 `preview_execute_cine_poses.png`、用 `make_gif.py` 拼成 `preview_execute_cine.gif`。
+> ⚠️ 清单里所有 `docs/preview*` 预览图**已在 `.gitignore` 里忽略**（连同 `assets/**/previews/`）—— 仅为控制仓库体积：本地保留、仓库不带图，clone 下来看不到图时跑对应工具重出即可。
 
 ## 环境
 
@@ -63,6 +67,7 @@
 - ✅ **失衡条与处决**：完美格挡攒失衡（守卫 3 次）→ 敌人 BROKEN 站不稳 → 走近按左键处决（专属三段动画 + 全程无敌 + 大量但**不致命**的伤害 → 敌人爬起来，补一刀收尾）
 - ✅ 战斗循环：攻击判定、受击闪白、击退硬直、击杀
 - ✅ 打击闪光特效：完美格挡迸黄光、处决金爆闪（纯原语：亮球 + 扩散光环 + 点光源，播完自毁）
+- ✅ **处决特写分镜**（镜头导演层）：处决命中那一刻镜头自动切至特写 —— 相对取景分镜表 + 三刀**硬切** + 上下**遮幅黑边** + 慢动作/震屏，演完**无缝交还**追尾（见「处决特写分镜」一节）
 - ✅ **锁定标记**：锁定期间在敌人**身体中心**放一颗白色亮点（纯原语发光球，关深度测试所以透得过躯干；随敌人移动、脉动、解除即收）
 - ✅ 有边界竞技场（围墙 + 立柱）、天空光照
 - ✅ HUD：玩家血条、敌人血条 + **黄色失衡条**、准星、提示消息、完美格挡全屏金光、死亡遮罩
@@ -90,6 +95,7 @@ scripts/
   player/player.gd             # 玩家状态机 + 锁定模式 + 程序化原语角色
   enemy/enemy.gd               # 敌人 AI 状态机（含 BROKEN 失衡）
   camera/third_person_camera.gd# 镜头（含锁定自动绕背）
+  camera/cinematic_director.gd # 处决特写分镜导演（接管相机 + 相对取景分镜表 + 遮幅黑边）
   ui/hud.gd                    # HUD 构建与更新
   main/main.gd                 # 主场景逻辑
 tools/…                    # 校验/抓帧工具（见下方「动画 QA 工具」）
@@ -115,7 +121,7 @@ docs/GAME_DESIGN.md       # 设计文档与后续方向
 # exit=0 且无 SCRIPT ERROR 即通过
 ```
 
-战斗闭环自动化测试（含玩家模型/**闪避与完美闪避**/跳跃/**起跳动画已取消**/格挡/失衡/处决/**待机受击死亡**/**锁定侧移**/**锁定点击切换**/**锁定标记**/**近战朝向修正**/**三段连击与命中反馈**全链路等 **305 项断言**，exit=0 即全过）：
+战斗闭环自动化测试（含玩家模型/**闪避与完美闪避**/跳跃/**起跳动画已取消**/格挡/失衡/处决/**待机受击死亡**/**锁定侧移**/**锁定点击切换**/**锁定标记**/**近战朝向修正**/**三段连击与命中反馈**/**处决特写分镜**全链路等 **339 项断言**，exit=0 即全过）：
 
 ```powershell
 & 'D:\Godot_v4.7.2-stable_win64.exe\Godot_v4.7.2-stable_win64_console.exe' --headless --path D:\GodotProject\first-game 'res://tools/autotest/m1_autotest.tscn'
@@ -155,6 +161,8 @@ docs/GAME_DESIGN.md       # 设计文档与后续方向
 | `tools/lockon_capture/lockon_capture.tscn` | 自动演示 **未锁定横移 → 点一次中键锁定（镜头绕到背后 + 身体中心亮点出现）→ A/S/D 侧移后撤 → 再点一次中键（亮点收掉）** 并逐帧出图，用于肉眼确认"身体保持朝前、脚步横着走、亮点在躯干中心" |
 | `tools/anim_capture/combo_capture.tscn` | 自动演示 **三段连击**：第一幕逐段单独播并各采 3 个姿势帧、第二幕才是真正一整套连击（带后摇取消 + 输入缓冲），脚本自己打印**关键帧号**供取图。用于肉眼确认三段的剪影确实不同、以及"接段不跳位置" |
 | `tools/anim_capture/jump_capture.tscn` | 自动演示 **按住跳（≈1.2m）→ 落地 → 轻点小跳**，并打印"起跳前 / ★起跳瞬间 / 上升中 / 最高点 / 落地"的帧号。用于确认「按一下立即离地」的观感（起跳动画取消后新增，2026-09-21） |
+| `tools/anim_capture/execute_cine_capture.tscn` | 加载**真实主场景**、真的触发一次**处决**、让**分镜导演自己驱动相机**，把玩家**实际看到的那一路镜头**逐帧落盘（含慢动作摊帧），脚本打印"特写接管 / 遮幅到位 / ★★命中切点 / 拉回收招 / 慢动作谷底与回升 / 相机交还"的帧号。⚠ 不加 `--headless`；⚠ 落盘 PNG 序号 = `Engine.get_frames_drawn() − 1`（差 1 帧）；⚠ 关键帧判定用 **fov 门限**（`FOV_NEAR_CUT` 54 / `FOV_PULL_BACK` 55），**改分镜 fov 就要同步改** |
+| `tools/anim_capture/cine_frame_sweep.tscn` | 处决第 2 刀**取景候选 sweep**（临时对比工具）：把玩家摆到"命中那一拍"的姿势、冻结双方，在一次现场里渲 6 组候选取景（A 为旧值）→ 用 `grid.py` 拼图横向对比。用来自查"断言证明不了好看"的构图问题（见下方「处决特写分镜」一节） |
 | `tools/gen_sfx.py` | **程序化合成音效**（纯 Python 无第三方依赖）：`python tools/gen_sfx.py assets/audio/sfx` 重新生成轻挥/重挥/命中三个 wav。内置"滤波器发散"质量护栏 |
 | `tools/glb_anim_probe.py` | 直接解析 GLB 的 JSON chunk 打印**动画名 / 网格名清单**（**不经过 Godot**，一秒出结果）。覆盖 `assets/` 之前先用它确认"新 GLB 里到底有没有我要的动画" |
 | `tools/autotest/lock_toggle_probe.tscn` | **锁定输入边沿对抗性探针**（62 条断言，headless 即可跑）：专打"按住 → 点击切换"的边界 —— 长按中键 2s 只翻转一次、仅松手不解锁、连续点击奇偶翻转、范围外点击不自锁且无残留标记、锁定中目标销毁 / 死亡两条退化路径、目标 A 死亡当场改锁 B、不碰中键不得自锁。与主测试分工：主测试测**业务闭环**，本探针测**输入边沿语义**。运行命令见上方「验证方式（命令行）」 |
@@ -188,7 +196,7 @@ docs/GAME_DESIGN.md       # 设计文档与后续方向
 
 ## 玩家模型与动画
 
-- 模型：`assets/characters/player_knight/player_knight.glb`（**21 根骨骼的蒙皮模型**，17 段动画；Blender 源文件在 `E:\blender\blenderproject\player_knight\`）
+- 模型：`assets/characters/player_knight/player_knight.glb`（**21 根骨骼的蒙皮模型**，19 段动画；Blender 源文件在 `E:\blender\blenderproject\player_knight\`）
 - 资产说明见 `assets/characters/player_knight/README.md`；独立动画资源在 `animations/*.tres`
 
 | 动画 | 时长 | 循环 | 触发时机 | 播放倍速 |
@@ -430,6 +438,31 @@ docs/GAME_DESIGN.md       # 设计文档与后续方向
 - 纯原语、零美术资源，与项目整体低模风格一致。以后要换正式特效（GPUParticles3D + 贴图）
   只需替换 `HitFlash` 内部实现，**调用方接口不用改**
 - ⚠️ 这类"跟着游戏事件实时触发"的光效**必须**在引擎内做（云侧的 3D/视频生成只能产出离线素材，无法实时响应游戏事件）
+
+## 处决特写分镜（镜头导演层）
+
+处决不只是一段动画 —— 命中那一刻镜头会**自己切上去**：拉起上下遮幅黑边、按一张"分镜表"逐刀**硬切**机位、命中刀压上慢动作与震屏，演完再把相机交还追尾。实现是一个**自包含**节点 `CinematicDirector`（`scripts/camera/cinematic_director.gd`），塞进主场景即生效。逐刀取景的调参说明与设计取舍见 **`docs/CINEMATIC_CAMERA_GUIDE.md`**。
+
+三条机制（都在 `cinematic_director.gd`）：
+
+- **导演接管相机**：处决起手时 `player.gd` 调 `director.play(EXECUTE_SHOTS, execute_time, self, target)`，导演从 `"camera"` 组找到追尾相机、置 `driven = true`，此后每帧用 `ThirdPersonCamera.apply_driven_pose(pos, look, fov)` 写位姿与 fov（追尾的 `_process`/`_input` 在 `driven` 期间直接 `return`）；收招时 `director.stop()` → `release_driven()` 从当前位姿**反推 yaw/pitch** 交还，镜头**不弹回**。
+- **相对取景（每帧重采样锚点）**：取景轴 = 玩家胸口 → 敌人胸口（水平）；机位 = 锚点 + 由 `azimuth`/`elev`/`dist` 描述的方向 × 距离，`fov` 单独给。所以"从玩家侧后方 4.2m、抬高 22° 俯视"这句话**不管演员怎么动都成立** —— 机位跟着人走（绝对坐标机位会因为击退/前冲而失焦）。
+- **归一化时间 + 硬切**：分镜表的 `t` 是 0..1 的**比例**（相对 `execute_time`），改时长时分镜自动等比伸缩、命中切镜也不会落后于动画；三刀之间**硬切（不插值）**，只在进场（`INTRO_TIME` 0.15s）与交还两端平滑。时间轴用**被 `time_scale` 缩放过的 delta** 推进，慢动作时机位与画面天然同步。
+
+分镜表 `EXECUTE_SHOTS`（三刀，切点对齐 `execute_hit_time`）：
+
+| t | pivot | azimuth | elev | dist | fov | 意图 |
+|---|---|---|---|---|---|---|
+| 0.00 | `mid` | 58° | 22° | 4.2m | 62° | 全景交代（看清"在处决谁"） |
+| 0.32 | `enemy` | 18° | 8° | 3.6m | 50° | **命中近景**（= `execute_hit_time`，硬切过肩） |
+| 0.62 | `player` | 18° | 20° | 4.6m | 58° | 拉回收招 |
+
+- **遮幅黑边**：导演自建 `CanvasLayer(layer = 0)` + 上下两条 `ColorRect`，各占视口高 `LETTERBOX_RATIO` **0.12**（有效画面 ≈ 76%，接近 2.35:1 的电影感）；滑入/滑出 **0.15 真实秒**（`set_ignore_time_scale` → 慢动作不会把遮幅也拖慢）。HUD 是 `layer = 10`，所以遮幅压在 **3D 之上、HUD 之下**（不挡血条）。
+- **处决命中反馈**（`player.gd` 顶部 `@export`）：命中刀同时压 **慢动作** `cinematic_slowmo_scale` **0.35** / 保持 **0.28s** / 回升 **0.40s**（复用子弹时间那套 `_start_bullet_time`）、**震屏** `execute_shake` **0.085** / 0.16s（加在相机**子节点**偏移上，与导演写父节点位姿互不干扰 → 特写期间照样看得见）、**金爆闪**收敛到半径 **0.95** / 时长 **0.30** / 光强 **7.5**（近景特写下原 1.4/0.45/9.0 会糊屏）；可选顿帧 `execute_hitstop` 默认 **0**（关）。
+- **优雅降级**：`"cinematic"` 组里没有导演时（自动测试 / 裸场景），`play()`/`stop()` 调用处**静默跳过**，处决照常跑完；目标在演出中途失效 → 导演 `_process` 检测到锚点失效即 `stop()` 安全退出、相机交还。
+- **测试与出片**：`m1_autotest` 1f-2 节覆盖"导演接管 / fov 改动 / 遮幅纯黑且 `layer == 0` / 命中后机位改变 / 慢动作自行回升 / 震屏 / 交还后 yaw·pitch 反推一致（**不弹回**）/ 目标失效安全退出 / 无导演降级 / fov 复位 70"；真成片用 `tools/anim_capture/execute_cine_capture.tscn` 抓帧（⚠ **不加 `--headless`**）。
+- ⚠️ **两个抓帧坑**：① `--write-movie` 落盘的 PNG 序号 = `Engine.get_frames_drawn() − 1`（差 1 帧，取关键帧要据此修正）；② 抓帧脚本的关键帧判定用 **fov 门限**（`FOV_NEAR_CUT` 54 / `FOV_PULL_BACK` 55），**改了分镜表里任一刀的 fov 就要同步改门限**，否则对应字幕行会静默消失（本工程真踩过：第 2 刀 fov 从 36 改成 50 后，旧门限 49 永远不触发）。
+- ⚠️ **断言证明不了"好看"**：第 2 刀最初取景 `enemy / 1.9m / fov 36` 时**四套测试全绿**（fov 变了、机位变了），可真成片里是**一整屏蓝橙色平面多边形、完全读不出斩击** —— 机位离敌人太近直接穿进了玩家身体。最后是靠 `tools/anim_capture/cine_frame_sweep.tscn` 扫 6 组候选、目视对比才定成现在的过肩机位。**这一层改了必须真跑一遍抓帧、肉眼复核**。
 
 ## 命中判定窗是怎么定的
 

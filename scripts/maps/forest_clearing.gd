@@ -51,6 +51,8 @@ var _player: PlayerCharacter
 var _enemy: EnemyBrute
 var _hud: Hud
 var _camera: ThirdPersonCamera
+## 电影化分镜导演：处决时接管相机做特写运镜 + 遮幅黑边（见 scripts/camera/cinematic_director.gd）
+var _director: CinematicDirector
 var _switcher: CharacterSwitcher = null
 var _player_dead: bool = false
 ## 场边的可对话 NPC
@@ -67,6 +69,10 @@ func _ready() -> void:
 	add_child(_hud)
 	_camera = CAMERA_SCENE.instantiate() as ThirdPersonCamera
 	add_child(_camera)
+	# 2.5) 电影化分镜导演：自包含，紧跟相机之后加入即可（处决时接管相机做特写分镜）
+	_director = CinematicDirector.new()
+	_director.name = "CinematicDirector"
+	add_child(_director)
 	# 3) 角色（出生点从场景里的 Marker3D 读，方便在编辑器拖）
 	_spawn_player()
 	_spawn_enemy()

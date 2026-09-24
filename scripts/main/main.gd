@@ -36,6 +36,8 @@ var _player: PlayerCharacter
 var _enemy: EnemyBrute
 var _hud: Hud
 var _camera: ThirdPersonCamera
+## 电影化分镜导演：处决时接管相机做特写运镜 + 遮幅黑边（见 scripts/camera/cinematic_director.gd）
+var _director: CinematicDirector
 ## 【调试】角色切换器：决定"现在这双手在操控谁"
 var _switcher: CharacterSwitcher = null
 ## 玩家是否死亡：死亡遮罩期间不强行捕获鼠标（否则玩家看不到"按R重来"提示）
@@ -52,6 +54,11 @@ func _ready() -> void:
 	add_child(_hud)
 	_camera = CAMERA_SCENE.instantiate() as ThirdPersonCamera
 	add_child(_camera)
+	# 2.5) 电影化分镜导演：自包含（自己找相机、自建遮幅），紧跟相机之后加入即可。
+	#      玩家脚本通过 "cinematic" 组找它 → 处决时把相机交给它。
+	_director = CinematicDirector.new()
+	_director.name = "CinematicDirector"
+	add_child(_director)
 	# 3) 角色
 	_spawn_player()
 	_spawn_enemy()
