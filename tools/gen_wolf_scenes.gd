@@ -52,14 +52,21 @@ func _gen_wolf() -> bool:
 	root.set("enemy_weapon_path", "")      # ★ 空串 = 无武器（徒手撕咬）
 	root.set("drop_item_id", "")           # ★ 空串 = 不掉落（不参与 q_guards）
 	root.set("drop_item_amount", 1)
-	root.set("move_speed", 4.2)
+	# ★ 3.4（原 4.2）：动画倍速根修（方案 β）之后实播倍速 ≡ speed_scale，
+	#   4.2 会给出 3.58 步/秒（读感是模糊的"刨地"）；3.4 约 2.90 步/秒，
+	#   落在真实狼小跑 2–3 Hz。★ 必须与 scenes/enemy/wolf.tscn 保持一致 ——
+	#   否则重跑本生成器会把 move_speed 改回 4.2，verify_enemy_wolf 立刻变红。
+	root.set("move_speed", 3.4)
 	root.set("attack_damage", 12)
 	root.set("parry_poise_percent", 50.0)  # 2 次完美格挡失衡
 	root.set("aggro_range", 13.0)
 	root.set("attack_range", 2.0)
 	root.set("model_target_height", 1.20)
 	root.set("walk_natural_speed", 1.1724) # 实测值（probe_stride_wolf）
-	root.set("walk_max_speed_scale", 3.8)  # 保证 4.2/1.1724=3.58 不触发 clamp
+	root.set("walk_max_speed_scale", 3.8)  # ★ 旧注释「保证 4.2/1.1724=3.58 不触发 clamp」已被证伪：
+	#   它只约束**单帧** want=clamp(spd/1.1724, 0.4, 3.8)，而旧代码的实播倍速是
+	#   speed_scale × 被 play() 冻结的 custom，稳态可达 3.58×1.74≈6.2 —— 完全越过了这个"上限"。
+	#   数值 3.8 保持不动（改它会翻别的断言）；倍速真源改由 enemy.gd 的 β 修法保证。
 	root.set("corpse_linger_time", 1.2)
 	root.set("hitbox_size", Vector3(1.4, 1.1, 1.5))
 	root.set("hitbox_offset", Vector3(0.0, 0.65, -1.2))

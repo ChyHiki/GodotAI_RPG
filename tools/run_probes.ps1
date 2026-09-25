@@ -85,7 +85,8 @@ $SceneValidators = @(
     @{ Name = "verify_wolf_death";  Path = "res://tools/verify_wolf_death.tscn"  },
     @{ Name = "verify_brute_death"; Path = "res://tools/verify_brute_death.tscn" },
     @{ Name = "verify_qa_negative"; Path = "res://tools/verify_qa_negative.tscn" },
-    @{ Name = "verify_qa_death_states"; Path = "res://tools/verify_qa_death_states.tscn" }
+    @{ Name = "verify_qa_death_states"; Path = "res://tools/verify_qa_death_states.tscn" },
+    @{ Name = "verify_playback_invariant"; Path = "res://tools/verify_playback_invariant.tscn" }
 )
 
 $failed = @()

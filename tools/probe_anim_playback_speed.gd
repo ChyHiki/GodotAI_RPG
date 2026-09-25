@@ -8,8 +8,10 @@ extends Node3D
 ##   Godot_v4.7.2-stable_win64_console.exe --headless --path D:\GodotProject\first-game \
 ##       res://tools/probe_anim_playback_speed.tscn
 ##
-## 【只测量，不判定】本探针 exit 恒为 0（除非 setup 失败），故意**不**纳入
-##   tools/run_probes.ps1 —— 一个永不失败的守门项没有意义。它的值是给人读的。
+## 【只测量，不判定】除判定 4b 外本探针只测量：判定 1/2/3/4 是给人读的证据，不会让 exit != 0。
+##   判定 4b 例外（β 新写法对照，见文件末）：它是断言，失败时 exit=1。
+##   本探针故意**不**纳入 tools/run_probes.ps1 —— β 的常驻守门由
+##   verify_playback_invariant.tscn（INV-1 / G-11 / G-12）承担，免得重复跑同一件事。
 ##
 ## ============================================================
 ## 【背景】enemy.gd 的 _play_loop(:1167-1173) 是两层写法：
@@ -281,5 +283,34 @@ func _ready() -> void:
 		print("  ⇒ 实测吻合 %s" % ("★ spd^2 ⇒ _play_once **确实双重复用**" if absf(p4 - spd * spd) < 0.01 else ("spd ⇒ 单层，无此问题" if absf(p4 - spd) < 0.01 else "两者都不吻合，需人工判断")))
 	else:
 		print("  ✗ 找不到动画 %s，判定 4 跳过" % a_name)
+
+	# ================= 判定 4b：β（新写法）对照 =================
+	# 【为什么要再补一条】判定 4 **刻意复现旧的两行调用顺序**（那正是它的用途：留证旧代码
+	#   做过什么），所以它改完 β 之后会**继续打印 spd²** —— 看到 spd² 不代表 β 失败。
+	#   判定 4b 按**新写法**调用：play(name, 0.0, 1.0) + speed_scale = spd，
+	#   断言实播倍速**精确等于 spd**（而不是 spd²）。这条以后就是 β 的常驻回归工具。
+	# 【为什么是"精确"而不是"约等于"】β 的因子恰好 = 1.0，落在任何打折区间的内部，
+	#   区间断言天生无法证伪；spd² 与 spd 只差约 0.09，必须精确相等才抓得住回归。
 	print("")
-	get_tree().quit(0)
+	print("【判定 4b】β 新写法：play(custom_speed=1.0) + speed_scale=spd ⇒ playing 应**精确** == spd")
+	var ok4b := false
+	if anim.has_animation(a_name):
+		var blen := anim.get_animation(a_name).length
+		var bdur := float(wolf.get("windup_time"))
+		var bspd := blen / maxf(0.05, bdur)
+		anim.play(a_name, 0.0, 1.0)      # ★ β：custom_speed 恒 1.0
+		anim.speed_scale = bspd           # ★ 倍速的唯一真源
+		await get_tree().physics_frame
+		var p4b := anim.get_playing_speed()
+		print("  %s：length=%.4fs  duration=%.4fs ⇒ spd = %.6f" % [a_name, blen, bdur, bspd])
+		print("  实测 get_playing_speed() = %.6f" % p4b)
+		print("     期望【β 单层】== spd  = %.6f" % bspd)
+		print("     旧病若还在     == spd² = %.6f" % (bspd * bspd))
+		ok4b = absf(p4b - bspd) < 1e-6
+		print("  ⇒ 判定 4b：%s" % ("PASS（实播倍速精确 == spd）" if ok4b else
+			"FAIL（实播倍速 ≠ spd，β 未生效或被回退）"))
+	else:
+		print("  ✗ 找不到动画 %s，判定 4b 跳过" % a_name)
+	print("")
+	# 【exit 语义】判定 4b 是断言（会失败），故失败时 exit=1；其余判定仍只做测量。
+	get_tree().quit(0 if ok4b else 1)

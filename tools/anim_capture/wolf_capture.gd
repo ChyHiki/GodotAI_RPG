@@ -21,7 +21,7 @@ extends Node
 
 const WOLF_TSCN := "res://scenes/enemy/wolf.tscn"
 const SPEED_TROT_MED := 2.5      # 中速 trot（m/s）
-const SPEED_TROT_FULL := 4.2     # 全速 trot（= wolf.tscn 的 move_speed）
+const SPEED_TROT_FULL := 3.4     # 全速 trot（= wolf.tscn 的 move_speed；β 后由 4.2 改为 3.4）
 
 var _wolf: Node3D = null
 var _cam: Camera3D = null

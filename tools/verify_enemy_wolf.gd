@@ -192,7 +192,11 @@ func _initialize() -> void:
 			"%.1f" % (po.max_poise if po != null else -1.0))
 
 		# 数值参数
-		_check(absf(_f(wolf.get("move_speed")) - 4.2) < 0.001, "move_speed == 4.2")
+		# ★ 4.2 → 3.4：动画倍速根修（方案 β）之后，实播倍速 ≡ speed_scale，
+		#   4.2 会给出 3.58 步/秒（读感是模糊的"刨地"）；3.4 给出约 2.90 步/秒，
+		#   落在真实狼小跑 2–3 Hz 区间。这里跟着改，本断言的用途不变：
+		#   仍然是"wolf.tscn 被意外改回/改坏就立刻变红"的资产漂移哨兵。
+		_check(absf(_f(wolf.get("move_speed")) - 3.4) < 0.001, "move_speed == 3.4")
 		_check(absf(_f(wolf.get("walk_natural_speed")) - 1.1724) < 0.0001, "walk_natural_speed == 1.1724")
 		_check(absf(_f(wolf.get("walk_max_speed_scale")) - 3.8) < 0.001, "walk_max_speed_scale == 3.8")
 		_check(absf(_f(wolf.get("model_target_height")) - 1.20) < 0.001, "model_target_height == 1.20")

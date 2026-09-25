@@ -1164,13 +1164,29 @@ func _animate_death(delta: float) -> void:
 
 
 ## 循环播放某段动画（同名则不重启，避免每帧重播卡在第一帧）。
+##
+## 【★ 倍速的唯一真源是 speed_scale 属性；play() 的第 4 参恒传 1.0】
+## Godot 的实播倍速 = 属性 speed_scale × play() 的 custom_speed —— **两个独立因子相乘**。
+##   旧写法是"两层"：换名那一帧把倍速当 custom_speed 传给 play()（custom 就此被**冻结**，
+##   之后任何 speed_scale 改动都只是在它上面再乘一次），同名帧才改 speed_scale。
+##   后果：实播倍速 = 被冻结的旧值 × 当前值，既不等于我们想要的 speed，也**不可复现**
+##   （同一场景同一二进制实测到过 2.4668 / 1.4096 / 2.025 / 1.0155 / 0.5704）。
+##   新写法（方案 β）：custom 恒为 1.0 ⇒ get_playing_speed() ≡ speed_scale ≡ speed。
+##
+## 【★ 为什么 speed_scale 的赋值必须在 if/else 之外（无条件）】
+##   play() **既不读也不重置**属性 speed_scale。如果把赋值留在 else（同名）分支里，
+##   那么"换名那一帧"只有 play() 跑了：那一帧的实播 = 旧的 speed_scale × 1.0，
+##   也就是沿用了**上一段动画的倍速**，要等下一帧才收敛。这会把"一帧残留"
+##   固化在**每一次切段**上 —— 比改之前更糟。无条件写才能保证"最后一次写入者恒为我们"。
+##   （写在 play() 之前还是之后功能等价；写成"之后"是为了对未来 Godot 版本
+##    万一让 play() 也动属性时天然免疫。硬约束是"无条件"，不是"顺序"。）
 func _play_loop(anim_name: String, speed: float = 1.0) -> void:
 	if _anim_player == null or anim_name == "":
 		return
 	if _anim_player.current_animation != anim_name:
-		_anim_player.play(anim_name, anim_blend_time, speed)
-	else:
-		_anim_player.speed_scale = speed
+		_anim_player.play(anim_name, anim_blend_time, 1.0)
+	# ★ 无条件写（在 if/else 之外）：理由见上方函数注释
+	_anim_player.speed_scale = speed
 
 
 ## 单次播放某段动画，并把它拉伸/压缩到 duration 秒播完。
@@ -1178,6 +1194,17 @@ func _play_loop(anim_name: String, speed: float = 1.0) -> void:
 ## （AttackWindup 0.5s ↔ windup_time 0.5），但两个值都能在编辑器里改。
 ## 用"动画长度 ÷ 目标时长"实时换算，改任何一个都不会出现
 ## "动画播完了状态还没结束"或"状态结束了动画还在挥"。
+##
+## 【★ 与 _play_loop 同一个两层 bug，同一个修法】
+##   旧写法：换名帧 play(name, blend, spd)（custom 被冻结成 spd）+ 之后每帧
+##   speed_scale = spd ⇒ 稳态实播 = spd × spd = **spd²**，比本函数注释写的意图
+##   （铺满 duration 秒 ⇒ 要求 playing == spd）**快一个 spd 倍**，动画提前播完并冻末帧。
+##   实测隔离实验：AttackWindup length=0.5417 / windup_time=0.5 ⇒ spd=1.0833，
+##   按旧两行调用后 get_playing_speed() = 1.1736 = 1.0833²。
+##   β 修法：play() 的 custom_speed 恒传 1.0，spd 只写进 speed_scale 属性
+##   ⇒ get_playing_speed() ≡ spd，与"铺满 duration"的意图一致。
+##   speed_scale 的赋值同样必须**无条件**（在 if/else 之外），理由见 _play_loop 的注释：
+##   否则换名那一帧会沿用上一段动画的倍速，把一帧残留固化在每次切段上。
 func _play_once(anim_name: String, duration: float) -> void:
 	if _anim_player == null or anim_name == "":
 		return
@@ -1186,9 +1213,9 @@ func _play_once(anim_name: String, duration: float) -> void:
 		return
 	var spd := a.length / maxf(0.05, duration)
 	if _anim_player.current_animation != anim_name:
-		_anim_player.play(anim_name, anim_blend_time, spd)
-	else:
-		_anim_player.speed_scale = spd
+		_anim_player.play(anim_name, anim_blend_time, 1.0)
+	# ★ 无条件写（理由同上）
+	_anim_player.speed_scale = spd
 
 
 ## 模型外观：按 AI 状态播对应的骨骼动画。
