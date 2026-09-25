@@ -12,9 +12,10 @@
 ##
 ## WHAT IT RUNS
 ##   1) Four gameplay probes (.tscn, from the autotest suite) -- with a hard assertion baseline.
-##   2) Five asset validators -- added in T05 so they stop rotting in `tools/`:
+##   2) Seven asset validators -- added in T05 so they stop rotting in `tools/`:
 ##        --script class : verify_enemy_model.gd, verify_enemy_wolf.gd
-##        .tscn   class : verify_wolf_hitbox.tscn, verify_wolf_death.tscn, verify_brute_death.tscn
+##        .tscn   class : verify_wolf_hitbox.tscn, verify_wolf_death.tscn, verify_brute_death.tscn,
+##                          verify_qa_negative.tscn, verify_qa_death_states.tscn
 ##      The two classes run differently (see the manifests below) -- do NOT mix them up:
 ##        * `--script res://...gd`  -> only works for scripts that `extends SceneTree`.
 ##        * `res://...tscn`         -> for `extends Node` scripts (need a scene + autoloads).
@@ -22,7 +23,7 @@
 ## USAGE
 ##   .\tools\run_probes.ps1               # probes + validators (default)
 ##   .\tools\run_probes.ps1 -Only m1      # one probe: m1 | quest | lock | possess
-##   .\tools\run_probes.ps1 -Verify       # only the 5 validators (skip the 4 probes)
+##   .\tools\run_probes.ps1 -Verify       # only the 7 validators (skip the 4 probes)
 ##   .\tools\run_probes.ps1 -Verbose      # print log tails for unhealthy entries
 ##
 ## EXIT CODE: 0 = everything passed; 1 = something failed; 3 = Godot binary not found.
@@ -82,7 +83,9 @@ $ScriptValidators = @(
 $SceneValidators = @(
     @{ Name = "verify_wolf_hitbox"; Path = "res://tools/verify_wolf_hitbox.tscn" },
     @{ Name = "verify_wolf_death";  Path = "res://tools/verify_wolf_death.tscn"  },
-    @{ Name = "verify_brute_death"; Path = "res://tools/verify_brute_death.tscn" }
+    @{ Name = "verify_brute_death"; Path = "res://tools/verify_brute_death.tscn" },
+    @{ Name = "verify_qa_negative"; Path = "res://tools/verify_qa_negative.tscn" },
+    @{ Name = "verify_qa_death_states"; Path = "res://tools/verify_qa_death_states.tscn" }
 )
 
 $failed = @()
