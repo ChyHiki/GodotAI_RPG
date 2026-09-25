@@ -56,6 +56,17 @@ func _row(i: int, st: int, spd: float, cur: String, ss: float, ps: float) -> voi
 	print("%5d | %5d | %5.3f | %-12s | %11.4f | %7.4f | %13.4f" % [i, st, spd, cur, ss, ps, cs])
 
 
+## 与 enemy.gd 各状态分支 `_play_once(anim, duration)` 的第 2 参保持一致。
+## 改 enemy.gd 的这些分支时必须同步改这里，否则判定 4 的期望值会算错。
+func _duration_for(wolf: Node, st: int, anim_name: String) -> float:
+	match st:
+		2: return float(wolf.get("windup_time"))    # WINDUP  : _play_once(_windup_anim, windup_time)
+		3: return float(wolf.get("strike_time"))    # STRIKE  : _play_once(_attack_anim, strike_time)
+		5: return float(wolf.get("stagger_time"))   # STAGGER : _play_once(_hit_anim, _stagger_time)
+		6: return 0.6                               # BROKEN  : _play_once(_hit_anim, 0.6) 写死
+	return 0.0
+
+
 func _ready() -> void:
 	print("=== 诊断：实播倍速 = speed_scale × custom_speed ? ===")
 
@@ -181,6 +192,46 @@ func _ready() -> void:
 		print("  ⇒ 脚底与地面速度相差 **%.0f%%**" % (absf(slide - 1.0) * 100.0))
 	print("  对照：若 speed_scale 是唯一真源，实播倍速应为 %.4f，滑移比 %.3f" % [
 		st_ss, (st_ss * natural / st_spd) if st_spd > 0.001 else 0.0])
+
+	# ================= 判定 4：单次动画是否也是两层相乘（playing == spd² ?）=================
+	# 【为什么要单独测】_play_once(enemy.gd:1181-1191) 与 _play_loop 是同一个写法：
+	#   换名那一帧 play(name, blend, spd) 把 custom_speed 钉成 spd，
+	#   之后每帧又把 speed_scale 也写成 spd ⇒ 稳态 playing = spd × spd = spd²。
+	#   但这条此前只是"从第 149 帧一个数据点反推"，改动守卫攻击速度前必须坐实，
+	#   所以在多段单次动画上分别取样、并与"意图 spd"和"spd²"两个期望值同时比。
+	print("")
+	print("【判定 4】单次动画（_play_once）是否也两层相乘？")
+	print("  意图：spd = length / duration，把动画铺满 duration 秒 ⇒ 期望 playing == spd")
+	print("  若与 _play_loop 同病       ⇒ playing == spd²")
+	var sampled: Dictionary = {}
+	for i in 600:
+		await get_tree().physics_frame
+		var cur4: String = anim.current_animation
+		var st4: int = wolf.state
+		if st4 >= 2 and st4 <= 6 and cur4 != "" and not sampled.has(cur4):
+			# 先让 speed_scale 被写成稳态（至少走过一帧 else 分支）再取样
+			await get_tree().physics_frame
+			await get_tree().physics_frame
+			var a4 := anim.get_animation(cur4)
+			var dur4 := _duration_for(wolf, st4, cur4)
+			if a4 != null and dur4 > 0.0:
+				var spd4 := a4.length / dur4
+				var ss4 := anim.speed_scale
+				var ps4 := anim.get_playing_speed()
+				sampled[cur4] = true
+				print("  ── state=%d  anim=%s  length=%.4fs  状态机 duration=%.4fs" % [st4, cur4, a4.length, dur4])
+				print("     意图 spd = length/duration = %.4f" % spd4)
+				print("     实测 speed_scale=%.4f  playing=%.4f  ⇒ 反推 custom=%.4f" % [ss4, ps4, ps4 / ss4])
+				print("     期望【若单层】playing = %.4f     期望【若两层】playing = spd² = %.4f" % [spd4, spd4 * spd4])
+				print("     判定：|playing−spd|=%.4f  vs  |playing−spd²|=%.4f  ⇒ %s" % [
+					absf(ps4 - spd4), absf(ps4 - spd4 * spd4),
+					"单层（无此病）" if absf(ps4 - spd4) < absf(ps4 - spd4 * spd4) else "★ 两层相乘（= spd²）"])
+		if sampled.size() >= 3:
+			break
+	if sampled.is_empty():
+		print("  ⚠ 600 帧内没抓到单次动画状态（狼可能停在 RECOVER/CHASE），本判定未取到样本")
+	else:
+		print("  共取到 %d 段单次动画样本：%s" % [sampled.size(), ", ".join(sampled.keys())])
 
 	# ================= 单层语义对照（验证修复方向）=================
 	print("")
