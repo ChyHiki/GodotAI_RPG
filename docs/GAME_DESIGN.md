@@ -305,6 +305,57 @@ Idle/Hurt/Death 三段生活动画的识别 / 时长 / 循环开闭 / 播放倍�
 `preview_execute_cine.gif`（整套处决特写动图，看**切镜节奏**）。
 
 
+## 怪物（敌人）
+
+### 狼（四足敌人，2026-09-25 新增）
+
+项目里的**第二个敌人物种**，也是第一个**四足**敌人 —— 用来验证"一套敌人脚本驱动多物种"这条路走得通
+（守卫是两足 + 武器，狼是四足 + 徒手，两者共用 `scripts/enemy/enemy.gd`，见下一节）。
+模型 `assets/enemies/wolf_01/wolf_rigged.glb`（**22 根骨骼**的刚性蒙皮；源工程在 `E:\blender\blenderproject\enemies\wolf_01\`）。
+
+| 项 | 值 | 说明 |
+|---|---|---|
+| 骨骼 | **22**（四足） | 徒手物种：骨架里**没有** `weapon.R` —— 守卫版的武器挂点逻辑**必须能空串早退**，否则狼会在这里假失败 |
+| 动画 | **6 段**：`Idle`(2.0s) / `Walk`(1.0s) / `AttackWindup`(0.5s) / `Attack`(0.25s) / `Hit`(0.4167s) / `Death`(1.0s) | 与守卫同一套**关键字识别**；`Walk` 是**对角步态（trot）**，正好用来验证四足循环 |
+| 血量 | `Health.max_hp` = **70** | 比守卫（100）脆 |
+| 失衡 | `parry_poise_percent` = **50% → 2 次完美格挡** | 比守卫（34% → 3 次）失衡更快，"弹反节奏"更短 |
+| 移速 | `move_speed` = **4.2 m/s** | 远快于守卫；`walk_natural_speed` 1.1724、`walk_max_speed_scale` 3.8 —— 4.2 m/s 需要 **3.58×** 播放，仍在 3.8 上限内，所以**脚步与地面不打滑** |
+| 命中盒 | 尺寸 `(1.4, 1.1, 1.5)`、偏移 `(0, 0.65, -1.2)`、`attack_damage` = **12** | 前伸的"咬合"盒（开在身前 -Z 方向） |
+| 缩放 | `model_target_height` = **1.20 m** | 由 `enemy.gd` 的**脚底对齐**逻辑自动算缩放系数 |
+| 武器 | **无**（`enemy_weapon_path = ""`） | 空串 = 徒手 → **静默跳过**、不建 `WeaponSocket` |
+| 地图 | `maps/wolf_test.tscn`（覆盖 `enemy_scene` 指狼） | 试玩 / 验收用（另有 `maps/forest_clearing.tscn`） |
+
+- **`Death` 用"侧躺不动、不缩小、不弹回站立"三条硬指标**验证（`tools/verify_wolf_death.tscn`）：
+  `scale` 恒 1、`|rot.x|≈0`（不叠加程序化栽倒）、在 `Death` 长度（1.0417s）+ 0.25s 余量后清场（实测 **1.302s**）。
+- **命中盒是实机验证的**（`tools/verify_wolf_hitbox.tscn`）：把玩家摆在狼正前 1.3m，让狼真跑一遍
+  `WINDUP→STRIKE`，断言玩家**真的掉血**（实测 hp 100 → 88，掉 **12** = `attack_damage`）—— 不是算出来的坐标。
+- **资产本身**由 `tools/verify_enemy_wolf.gd` 核对：骨骼 22 / 无 `weapon.R` / 6 段动画名与时长（含 glTF 1 帧偏移）/
+  缩放与脚底对齐 / 无武器 / `export` 数值 / 地图接线。
+- ★ **静止姿势的观感遗留**：狼的静止/站立姿势比"贴地"略高一点点（前爪与地面之间有一丝缝），
+  与守卫**改造前既有的**"装备/大棒穿地约 0.605m"同类，属**观感微瑕**，本轮**不修**、如实记录（要修是美术侧调绑定姿势的活）。
+
+**出片**（引擎内实拍，`tools/anim_capture/wolf_capture.tscn` 跑真实 `wolf.tscn`、相机每帧跟住狼）：
+`docs/preview_wolf_walk.gif`（idle → 中速 trot 2.5 → **全速 trot 4.2**，正侧视看**四足步态 / 要不要加大步幅**）、
+`docs/preview_wolf_combat.gif`（`AttackWindup→Attack` 斜前 45° → `Hit` → `Death` 塌倒后尸体停留）。
+用 `--fixed-fps 30` 固定步长抓帧（否则帧率不匀会糊），再用 `tools/img_probe/make_gif.py` 合成。
+
+### 一套 `enemy.gd` 驱动多物种
+
+守卫（`scenes/enemy/enemy.tscn`）与狼（`scenes/enemy/wolf.tscn`）**共用同一个** `scripts/enemy/enemy.gd`，
+脚本里**没有任何按物种分叉的 `if`** —— 物种差异**全部**落在场景的 `@export` 与模型资产上：
+
+- **外观**：`enemy_model_path` / `model_target_height`（各自的 GLB 与目标身高，缩放/脚底对齐自动算）
+- **动作**：动画**按关键字识别**（`idle` / `walk` / `windup` / `attack` / `hit` / `death`）——
+  模型里有什么名字就认什么，**缺哪段就退回程序化姿态兜底**
+- **武器**：`enemy_weapon_path` **空串 = 徒手 → 静默跳过**挂点（狼走这条；守卫挂棒 `club_01.glb`）
+- **数值**：`max_hp` / `move_speed` / `attack_damage` / `parry_poise_percent` / 命中盒尺寸与偏移 /
+  `walk_natural_speed`·`walk_max_speed_scale`
+
+★ 这条"多物种"路径是**刻意**的：**新增一个敌人 = 加一个场景 + 一份 GLB**，不碰任何脚本逻辑。
+代价是有一处历史遗留 —— 敌人脚本的 `class_name` 仍叫 **`EnemyBrute`**（守卫时代的名字），
+狼**没有**另起一个类：对代码而言，狼和守卫**就是同一个类**。这个名字**有意保留不改名**
+（改名会牵动一大片引用与断言，收益为零），所以看到 `EnemyBrute` 装着狼**不是 bug**。
+
 ## M2 手感打磨（候选清单，待反馈后取舍）
 
 - [x] 连击（最多 3 段，带节奏窗口）与攻击后摇取消 —— **2026-09-21 完成**：`Slash` / `Slash2` / `Slash3`

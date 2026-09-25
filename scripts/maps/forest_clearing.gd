@@ -17,7 +17,10 @@ extends Node3D
 
 ## ---- 预加载（只加载一次）----
 const PLAYER_SCENE := preload("res://scenes/player/player.tscn")
-const ENEMY_SCENE := preload("res://scenes/enemy/enemy.tscn")
+## ★ 敌人场景改成 @export：默认仍是 enemy.tscn（红甲守卫），
+##   具体关卡（如 wolf_test.tscn）在场景里覆盖成别的物种即可 —— 本脚本一行不改。
+##   ⚠️ 现有 maps/forest_clearing.tscn 不覆盖它 ⇒ 默认就是守卫，测试线不受影响。
+@export var enemy_scene: PackedScene = preload("res://scenes/enemy/enemy.tscn")
 const HUD_SCENE := preload("res://scenes/ui/hud.tscn")
 const CAMERA_SCENE := preload("res://scenes/camera/camera.tscn")
 const SWITCHER_SCRIPT := preload("res://scripts/debug/character_switcher.gd")
@@ -127,7 +130,9 @@ func _spawn_player() -> void:
 func _spawn_enemy() -> void:
 	if is_instance_valid(_enemy):
 		_enemy.queue_free()
-	_enemy = ENEMY_SCENE.instantiate() as EnemyBrute
+	if enemy_scene == null:
+		return
+	_enemy = enemy_scene.instantiate() as EnemyBrute
 	add_child(_enemy)
 	_enemy.global_position = _spawn_point("EnemySpawn", Vector3(0, 1.0, -9.0))
 	_enemy.died.connect(_on_enemy_died)

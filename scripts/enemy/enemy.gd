@@ -1,5 +1,11 @@
 extends CharacterBody3D
 class_name EnemyBrute
+## 【类名是历史遗留】本脚本现在驱动**多物种**（红甲守卫 / 狼 …），"EnemyBrute" 这名字已不准，
+##   但改名会打破 m1_autotest.gd(7 处) 与 lock_toggle_probe.gd 对 `EnemyBrute` 的引用 → 全套断言编不过，
+##   故**保留旧类名**。物种差异一律走 @export，不改代码：
+##     enemy_model_path / enemy_weapon_path / enemy_weapon_socket / drop_item_id /
+##     hitbox_size / hitbox_offset / corpse_linger_time，以及本文件既有的全部数值参数。
+##
 ## ============================================================
 ## 敌人"红甲守卫"：简易 AI 状态机 + 骨骼动画外观
 ## ============================================================
@@ -28,8 +34,9 @@ class_name EnemyBrute
 ##   break_time 秒内没被处决就自动恢复，失衡条清空重攒。
 ##
 ## 【外观：模型优先，程序化兜底】
-##   优先加载 Blender 出的骨骼动画模型 assets/enemies/brute_01/brute_rigged.glb，
-##   按状态机播放它自带的 5 段动画（Idle/Walk/AttackWindup/Attack/Hit）；
+##   优先加载 @export 的 `enemy_model_path`（默认守卫 = assets/enemies/brute_01/brute_rigged.glb；
+##   狼 = assets/enemies/wolf_01/wolf_rigged.glb），按状态机播放它自带的动作
+##   （Idle/Walk/AttackWindup/Attack/Hit/Death，狼与守卫均齐 6 段）；
 ##   模型加载失败（文件缺失/空网格）时自动回退到原来那套**程序化原语外观**，
 ##   也就是本文件下半部分的 _build_procedural_body / _animate_procedural。
 ##   两套外观的状态机逻辑完全一致，只是"怎么动"的实现不同。
@@ -53,6 +60,13 @@ enum State { IDLE, CHASE, WINDUP, STRIKE, RECOVER, STAGGER, BROKEN, DEAD }
 ## 敌人**类型**标识：任务系统靠它匹配"击杀某类怪"的目标（EventBus.enemy_died 的参数）。
 ## ⚠️ 填的是"类型"不是"实例"—— 同一种怪的所有实例填同一个值，任务只关心杀了几只。
 @export var enemy_id: String = "brute"
+
+## ★ 死亡掉落：击杀本敌人时通过 EventBus.item_collected 发放的物品 id + 数量。
+## 【为什么默认是 guard_insignia】改造前 `_die()` 里写死发一枚守卫徽记，任务 q_guards 要 3 枚，
+##   所以默认值必须逐字保留，否则一键玩守卫就掉不出徽记、任务链断掉。
+## 【空串 = 不掉落】狼等不参与该任务的物种把它设成 ""，`_die()` 里会静默跳过。
+@export var drop_item_id: String = "guard_insignia"
+@export var drop_item_amount: int = 1
 @export var move_speed: float = 2.8          # 追击速度(米/秒) —— 玩家 6.2，留出空间感
 @export var accel: float = 10.0              # 速度变化平滑度
 @export var aggro_range: float = 11.0        # 仇恨半径：玩家进入此距离才开始追
@@ -101,6 +115,19 @@ var manual_wish_dir: Vector3 = Vector3.ZERO
 @export var soft_lock_range: float = 3.0     # 搜索半径(米)
 @export var soft_lock_angle: float = 70.0    # 相对自身正面的最大偏角(度)
 
+## —— 攻击命中盒几何（按物种体型调，默认值 = 改造前守卫的硬编码字面量，**逐字不变**）——
+## 【为什么提成 @export】命中盒尺寸/位置原本写死是按 2.66m 的高个守卫调过的：
+##   box(2.2,1.5,1.5) 在面前 1.7m、胸口高 1.15m。换成 1.2m 高、前扑撕咬的狼，
+##   这套几何就完全不对（覆盖不到、高度也太高）→ 必须让每个物种各自给一套。
+##   默认值保持原样 ⇒ 守卫场景（scenes/enemy/enemy.tscn 不覆盖 export）行为逐字不变。
+@export var hitbox_size: Vector3 = Vector3(2.2, 1.5, 1.5)      # 宽 / 高 / 纵深
+@export var hitbox_offset: Vector3 = Vector3(0.0, 1.15, -1.7)   # 面前 1.7m、胸口高
+
+## 尸体在场停留时长(秒)：从死亡到 queue_free 的基准时长。
+## 【默认 1.2 = 改造前的硬编码值】保住守卫旧时序；
+##   实际销毁时长会跟"死亡动画长度"取较大值（见 _die），避免尸体没演完就被清。
+@export var corpse_linger_time: float = 1.2
+
 ## 重力(米/秒²)，与玩家一致
 const GRAVITY := 24.0
 
@@ -109,7 +136,7 @@ const GRAVITY := 24.0
 # 外观资产（模型 + 武器）
 #
 # 模型资产按类型分类存放：assets/enemies/brute_01/
-#   ├─ brute_rigged.glb  （模型+骨骼+5 段动画，**不含武器**）
+#   ├─ brute_rigged.glb  （模型+骨骼+6 段动画，**不含武器**）
 #   └─ club_01.glb       （大棒槌，独立资产）
 # 源文件（.blend）在 E:\blender\blenderproject\enemies\brute_01\，不在 Godot 项目内。
 #
@@ -118,14 +145,19 @@ const GRAVITY := 24.0
 # ------------------------------------------------------------------
 
 ## 敌人外观模型（.glb）。带骨骼动画的模型会自动识别并播放其中的动作。
-const ENEMY_MODEL := preload("res://assets/enemies/brute_01/brute_rigged.glb")
+## 【物种差异入口】换物种只改这个路径（或场景里覆盖这个 export），代码零改动：
+##   守卫 = res://assets/enemies/brute_01/brute_rigged.glb
+##   狼   = res://assets/enemies/wolf_01/wolf_rigged.glb
+@export_file("*.glb") var enemy_model_path: String = "res://assets/enemies/brute_01/brute_rigged.glb"
 
 ## 武器资产：与角色**分离**存放 —— 换武器只换这个文件，角色与全部动画都不用动。
 ## 资产约定：原点 = 握把中心，槌头沿自身局部 **-Z**（实测包围盒 z 从 +0.33 到 −1.43）。
-const ENEMY_WEAPON := preload("res://assets/enemies/brute_01/club_01.glb")
+## 【空串 = 无武器】狼等徒手物种设为 ""，_attach_weapon() 会静默跳过
+##   （徒手物种的骨架上没有 weapon.R 是正常的，不该 push_warning）。
+@export_file("*.glb") var enemy_weapon_path: String = "res://assets/enemies/brute_01/club_01.glb"
 
 ## 武器挂点骨骼名（模型里的空骨骼，位于右手手心）。
-const ENEMY_WEAPON_SOCKET := "weapon.R"
+@export var enemy_weapon_socket: String = "weapon.R"
 
 ## 挂点对齐变换（设在武器子节点上，见 _attach_weapon）：
 ## 把"槌头沿 -Z"扳到"槌头沿挂点骨骼 +Y" —— 绕 X 轴 +90° 即可（-Z → +Y）。
@@ -186,12 +218,14 @@ var _use_model: bool = false
 var _anim_player: AnimationPlayer = null
 ## 模型的骨骼节点：用于"没有对应动画时"把骨骼复位成绑定姿势（见 _anim_to_rest）
 var _skeleton: Skeleton3D = null
-## 按名字识别到的 5 段动画（空字符串 = 该动作没有动画资源，走脚本姿态兜底）
+## 按名字识别到的动画（空字符串 = 该动作没有动画资源，走脚本姿态兜底）
 var _idle_anim: String = ""
 var _walk_anim: String = ""
 var _windup_anim: String = ""
 var _attack_anim: String = ""
 var _hit_anim: String = ""
+## ★ 死亡动画（可选）：狼与守卫均有；徒手/老资产物种可缺省 → 空串时死亡走程序化栽倒兜底。
+var _death_anim: String = ""
 ## 武器挂点（BoneAttachment3D，挂在模型的 weapon.R 骨骼上）
 var _weapon_socket: BoneAttachment3D = null
 ## 当前装备的武器节点（徒手时为 null）
@@ -639,8 +673,8 @@ func _on_health_died() -> void:
 	_die()
 
 
-## 进入死亡：取消碰撞与命中盒、闪强光、广播 died、1.2s 后自动销毁自己。
-## (销毁是为了让"倒地消失动画"播完再清场；重生由主场景另计时生成新实例)
+## 进入死亡：取消碰撞与命中盒、闪强光、广播 died、按动画长度动态计时后自动销毁自己。
+## (销毁是为了让"倒地/死亡动画"播完再清场；重生由主场景另计时生成新实例)
 func _die() -> void:
 	if _dead:
 		return
@@ -651,18 +685,32 @@ func _die() -> void:
 	collision_mask = 0
 	_set_hitbox_active(false)
 	_flash(2.0)
+	# ---- ★ 有 Death 动画就播它（单次，播完冻末帧）----
+	# 【为什么要在这里播而不是 _process 里】_die() 是"死亡"这个事件的唯一入口，
+	#   在这里播一次即可；_animate_death() 每帧只负责把整体节点的残留变换清零。
+	if _use_model and _death_anim != "" and _anim_player != null:
+		_anim_player.speed_scale = 1.0
+		_anim_player.play(_death_anim, anim_blend_time, 1.0)   # 自然速度
 	died.emit()                    # 通知主场景开始重生计时
 	# 广播给全局事件总线：任务系统/成就/统计都靠这一行知道"某类怪死了一只"。
 	# 【为什么有了 died 还要多发一条】died 是**本实例**的局部信号，主场景用它排重生计时；
 	#   任务关心的是"某种怪死了一只"这个跨系统的世界事实 —— 两者语义不同、生命周期不同。
 	#   分开之后，任务系统不用去认识 EnemyBrute 这个类，以后加成就/掉落也不用再改这里。
 	EventBus.enemy_died.emit(enemy_id)
-	# 【临时占位掉落】项目还没有掉落表 / 拾取物系统，这里让守卫固定掉一枚徽记，
-	#   目的是把 "COLLECT 类任务目标" 这条链路先打通（示例任务 q_guards 要 3 枚）。
-	#   ⚠️ 等真正的掉落系统落地后删掉这一行，改由掉落物实体在"玩家拾取"时 emit ——
+	# 【临时占位掉落】项目还没有掉落表 / 拾取物系统，这里按 @export 的 drop_item_id 固定发一份，
+	#   目的是把 "COLLECT 类任务目标" 这条链路先打通（示例任务 q_guards 要 3 枚徽记 → 守卫默认发徽记）。
+	#   物种差异靠 export：狼 drop_item_id = "" → 静默不掉落。
+	#   ⚠️ 等真正的掉落系统落地后删掉这一块，改由掉落物实体在"玩家拾取"时 emit ——
 	#      那时"击杀"与"获得物品"才会真正分成两个独立事件。
-	EventBus.item_collected.emit("guard_insignia", 1)
-	get_tree().create_timer(1.2).timeout.connect(queue_free)
+	if drop_item_id != "":
+		EventBus.item_collected.emit(drop_item_id, drop_item_amount)
+	# ---- ★ 销毁时长不能短于死亡动画，否则尸体没演完就被清 ----
+	var linger := corpse_linger_time
+	if _use_model and _death_anim != "" and _anim_player != null:
+		var da := _anim_player.get_animation(_death_anim)
+		if da != null:
+			linger = maxf(corpse_linger_time, da.length + 0.25)
+	get_tree().create_timer(linger).timeout.connect(queue_free)
 
 
 # ------------------------------------------------------------------
@@ -700,7 +748,7 @@ func _on_hitbox_area_entered(area: Area3D) -> void:
 var _hitbox: Area3D   # 攻击命中盒(见 _build_hitbox)
 
 
-## 搭外观：先尝试加载外部模型(ENEMY_MODEL)；失败则用程序化原语兜底。
+## 搭外观：先尝试加载外部模型(enemy_model_path)；失败则用程序化原语兜底。
 ## 无论哪种，都会创建攻击命中盒挂在 VisualPivot 下(随朝向转动)。
 ## 结构与 player.gd 的 _build_body 保持一致，便于两边对照维护。
 func _build_body() -> void:
@@ -708,25 +756,28 @@ func _build_body() -> void:
 	_pivot.name = "VisualPivot"
 	add_child(_pivot)
 
-	if ENEMY_MODEL != null:
-		_use_model = _setup_model()
+	# 运行时按 @export 路径加载（而非 const preload）→ 同一份脚本可驱动不同物种模型。
+	var model_scene: PackedScene = (load(enemy_model_path) as PackedScene) if enemy_model_path != "" else null
+	if model_scene != null:
+		_use_model = _setup_model(model_scene)
 	if not _use_model:
 		_build_procedural_body()
 	_build_hitbox()
 
 
 # ------------------------------------------------------------------
-# 模型外观（brute_rigged.glb，21 骨骼 / 5 动画）
+# 模型外观（按 @export 的 enemy_model_path 加载，物种差异见文件头）
 # ------------------------------------------------------------------
 
 ## 加载并安置外部骨骼模型。实现三步：
 ##   1. 实例化 GLB，递归收集所有网格，用它们的包围盒+节点变换算出模型总包围盒；
 ##   2. 按 model_target_height 统一缩放，并平移到脚底 y=0、水平居中；
 ##   3. 登记材质（受击闪光用）→ 识别动画 → 把武器挂到骨骼挂点上。
-func _setup_model() -> bool:
-	var model := ENEMY_MODEL.instantiate() as Node3D
+func _setup_model(model_scene: PackedScene) -> bool:
+	var model := model_scene.instantiate() as Node3D
 	_pivot.add_child(model)
-	model.name = "BruteModel"
+	# 节点名带上 enemy_id（守卫 BruteModel / 狼 wolfModel），调试器里一眼认清是谁的模型。
+	model.name = "%sModel" % enemy_id
 
 	# 递归收集所有 MeshInstance3D 及其"相对模型根"的变换
 	var meshes: Array = []   # 每个元素 { "node": MeshInstance3D, "xform": Transform3D }
@@ -761,7 +812,7 @@ func _setup_model() -> bool:
 	)
 
 	_register_mesh_materials(model)   # 登记材质（受击闪光用）
-	_setup_animations(model)          # 识别 5 段动画
+	_setup_animations(model)          # 识别 6 段动画
 	_attach_weapon(model)             # 把独立武器资产挂到骨骼挂点
 	return true
 
@@ -798,16 +849,19 @@ func _register_mesh_materials(root: Node) -> void:
 		_register_mesh_materials(child)
 
 
-## 扫描模型自带的动画资源：找到 AnimationPlayer，并按名字识别 5 段动作。
+## 扫描模型自带的动画资源：找到 AnimationPlayer，并按名字识别 6 段动作。
 ## 识别规则（大小写无关、忽略下划线）：
 ##   含 windup                → 蓄力预警（AttackWindup）
+##   含 death / die           → 死亡（Death，单次、末帧保持不复位）
 ##   含 attack / slash        → 挥击（Attack）
 ##   含 walk                  → 行走（循环）
 ##   含 idle                  → 待机（循环）
 ##   含 hit / hurt            → 受击硬直（Hit）
-## 【判断顺序很重要】"AttackWindup" 里也含 "attack"，
-## 必须**先判 windup 再判 attack**；否则蓄力动画会被识别成挥击动画，
-## 表现为"举着棒子不动就突然打完了"。改动画名时留意这一点。
+## 【判断顺序很重要】两个坑都靠"先判更专有的关键字"躲开：
+##   1) "AttackWindup" 里也含 "attack" → 必须**先判 windup 再判 attack**，
+##      否则蓄力动画会被识别成挥击动画（表现为"举着棒子不动就突然打完了"）。
+##   2) death 插在 windup 与 attack 之间：防御未来出现 "DeathHit" 这类名字时被 hit 抢走。
+## 改动画名时留意这一点。
 func _setup_animations(model: Node3D) -> void:
 	_anim_player = _find_animation_player(model)
 	if _anim_player == null:
@@ -818,6 +872,8 @@ func _setup_animations(model: Node3D) -> void:
 		var key := String(anim_name).to_lower().replace("_", "")
 		if key.contains("windup"):
 			_windup_anim = String(anim_name)
+		elif key.contains("death") or key.contains("die"):     # ★ 新增：死亡（单次）
+			_death_anim = String(anim_name)
 		elif key.contains("attack") or key.contains("slash"):
 			_attack_anim = String(anim_name)
 		elif key.contains("walk"):
@@ -876,19 +932,25 @@ func _aabb_corners(aabb: AABB) -> Array[Vector3]:
 ## 把武器资产挂到模型骨骼的挂点上（BoneAttachment3D 挂在 Skeleton3D 下）。
 ## 之后蓄力/挥击等动画驱动手臂 → 武器自动跟随，无需为每把武器重做动画。
 func _attach_weapon(model: Node3D) -> void:
-	if _skeleton == null or ENEMY_WEAPON == null:
+	# ★ 无武器（狼 / 徒手物种）：静默跳过。
+	#   徒手物种的骨架上没有 weapon.R 是正常的，不该报警 —— 所以这条判断必须在
+	#   "找挂点骨骼"之前，否则会误报 "没有挂点骨骼" 的 warning。
+	if enemy_weapon_path == "":
 		return
-	var bone_idx := _skeleton.find_bone(ENEMY_WEAPON_SOCKET)
+	var weapon_scene: PackedScene = load(enemy_weapon_path) as PackedScene
+	if _skeleton == null or weapon_scene == null:
+		return
+	var bone_idx := _skeleton.find_bone(enemy_weapon_socket)
 	if bone_idx < 0:
-		push_warning("敌人模型里没有挂点骨骼 %s，武器未装备" % ENEMY_WEAPON_SOCKET)
+		push_warning("敌人模型里没有挂点骨骼 %s，武器未装备" % enemy_weapon_socket)
 		return
 	_weapon_socket = BoneAttachment3D.new()
 	_weapon_socket.name = "WeaponSocket"
 	_skeleton.add_child(_weapon_socket)
-	_weapon_socket.bone_name = ENEMY_WEAPON_SOCKET
+	_weapon_socket.bone_name = enemy_weapon_socket
 	# 注意：BoneAttachment3D 自己的 transform 每帧都会被"骨骼姿势"覆盖（引擎行为），
 	# 所以对齐偏移不能设在挂点上，而要设在**武器子节点**上。
-	_weapon = ENEMY_WEAPON.instantiate() as Node3D
+	_weapon = weapon_scene.instantiate() as Node3D
 	_weapon.transform = ENEMY_WEAPON_ALIGN_LOCAL
 	_weapon_socket.add_child(_weapon)
 	_register_mesh_materials(_weapon)   # 武器也跟着一起闪光
@@ -896,7 +958,8 @@ func _attach_weapon(model: Node3D) -> void:
 
 ## 停掉当前动画，并把所有骨骼复位到"绑定姿势"(rest pose)。
 ## 【为什么必须做】骨骼动画一旦停播，骨骼会**冻结在停播那一帧的姿势**。
-## 本模型没有"死亡动画"，所以死亡时统一复位到 rest pose，再由脚本叠加整体倒地。
+## 用于"模型**没有**死亡动画"的兜底路径：死亡时统一复位到 rest pose，再由脚本叠加整体倒地。
+## （狼/守卫现在都有 Death 动画，走的是 _animate_death 的"末帧保持"分支，不会调到这里。）
 func _anim_to_rest() -> void:
 	if _anim_player != null and _anim_player.is_playing():
 		_anim_player.stop()
@@ -910,9 +973,9 @@ func _anim_to_rest() -> void:
 		_skeleton.set_bone_pose_scale(i, rest.basis.get_scale())
 
 
-## 攻击命中盒：面前 2.2 米的大长方体感应区(平时关闭)。
+## 攻击命中盒：面前的长方体感应区(平时关闭)。
 ## 挂在 _pivot 下 → 随朝向转动，天然对齐"面前"。
-## 高度取 1.15m / 纵深 1.7m，与改造前完全一致（数值是按体验调过的，别乱动）。
+## 【几何来自 @export】hitbox_size / hitbox_offset 按物种体型给（守卫默认 = 改造前硬编码值）。
 func _build_hitbox() -> void:
 	_hitbox = Area3D.new()
 	_hitbox.name = "AttackHitbox"
@@ -922,9 +985,9 @@ func _build_hitbox() -> void:
 	var shape := CollisionShape3D.new()
 	shape.name = "HitboxShape"
 	var box := BoxShape3D.new()
-	box.size = Vector3(2.2, 1.5, 1.5)          # 宽2.2 高1.5 纵深1.5米(挥棒覆盖范围)
+	box.size = hitbox_size              # 宽 / 高 / 纵深
 	shape.shape = box
-	shape.position = Vector3(0.0, 1.15, -1.7)  # 面前1.7米、胸口高度
+	shape.position = hitbox_offset      # 面前偏移、高度
 	_hitbox.add_child(shape)
 	_hitbox.body_entered.connect(_on_hitbox_body_entered)
 	_hitbox.area_entered.connect(_on_hitbox_area_entered)
@@ -1064,7 +1127,7 @@ func _decay_flash(delta: float) -> void:
 # 两套实现，状态机逻辑完全一致，只是"怎么动"不同：
 #   _animate_model      —— 模型外观：播 glTF 自带的骨骼动画
 #   _animate_procedural —— 程序化外观：脚本直接转关节节点
-# 死亡状态两者共用 _animate_death（模型没有死亡动画，都是整体栽倒 + 缩小消失）
+# 死亡状态两者共用 _animate_death（有 Death 动画就播它并冻末帧；没有则整体栽倒 + 缩小消失）
 # ------------------------------------------------------------------
 
 func _process(delta: float) -> void:
@@ -1079,8 +1142,20 @@ func _process(delta: float) -> void:
 		_animate_procedural(delta)
 
 
-## 死亡：0.45s 内栽倒(-90°)，同时缩小并下沉(像被击碎消失)。两种外观共用。
+## 死亡：优先用模型自带的 Death 动画（末帧保持、★ 绝不复位）；没有该动画才回退程序化栽倒。
+## 【为什么死亡是"不复位"的唯一例外】项目约定：动画停播后骨骼冻在停播那帧，通常要
+##   _anim_to_rest() 复位；但死亡要恰恰相反 —— 复位会让尸体"啪"地站回去。
+##   （玩家侧已用断言钉死这条，守卫/狼沿用同一规则。）
 func _animate_death(delta: float) -> void:
+	if _use_model and _death_anim != "":
+		# 有死亡动画：_die() 里已播好，单次播完自然冻在末帧。
+		# 整体节点必须保持归零，否则会与动画叠加成"翻两圈"。
+		_pivot.position.y = 0.0
+		_pivot.rotation.x = lerp_angle(_pivot.rotation.x, 0.0, 1.0 - exp(-20.0 * delta))
+		_pivot.rotation.z = lerp_angle(_pivot.rotation.z, 0.0, 1.0 - exp(-20.0 * delta))
+		_pivot.scale = Vector3.ONE     # ★ 防御：死在 WINDUP 时 scale 会留着脉动值
+		return
+	# ---- 兜底（老资产无 Death / 程序化外观）：复位 + 整体栽倒 + 缩小消失 ----
 	if _use_model and _anim_player != null and _anim_player.is_playing():
 		_anim_to_rest()   # 模型没有死亡动画 → 先复位骨骼（复位后 is_playing 为假，只做一次）
 	_pivot.rotation.x = -PI / 2.0 * clampf(_state_time / 0.45, 0.0, 1.0)

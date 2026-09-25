@@ -19,6 +19,8 @@
 - `preview_execute_cine_poses.png` —— **分镜三刀代表帧横条**：用来确认三刀的**取景互不相同**、且第 2 刀近景能读出"剑砍进敌人"（GIF 看**切镜节奏**、横条看**逐刀取景**）
 - `lockon_04_marker_body_center.png` / `lockon_05_marker_zoom.png`（在 `assets/characters/player_knight/previews/`）
   —— **锁定标记**：点一次中键锁定后敌人**身体中心**出现一颗白色亮点（右图为同一帧放大；近白像素实测 20×20 px、再点一次解除后 0 个）
+- `preview_wolf_walk.gif` —— **狼的步态动图**（引擎内实拍）：站立 → 中速 trot（**2.5 m/s**）→ **全速 trot（4.2 m/s）**，正侧视看四足**对角步态**、以及"全速下步子够不够大"。★ 步态是"帧与帧之间"的东西，静态图上根本读不出来，所以用 GIF
+- `preview_wolf_combat.gif` —— **狼的招式动图**（引擎内实拍）：`AttackWindup→Attack`（下蹲蓄力 → 前扑咬合，斜前 45°）→ `Hit` 受击 → `Death` 塌倒后**尸体停留约 1.29s 再消失**
 
 > 前几张贴图由 `tools/fx_capture/fx_capture.tscn` 逐帧抓出来的，改完特效可以重跑一遍对比；
 > 生活三张由 `tools/life_capture/life_capture.tscn` 抓（演"待机 → 挨打 → 阵亡"）。
@@ -27,6 +29,7 @@
 > 拼成 `preview_combo_poses.png`；第二幕真一整套连击 → 用 `tools/img_probe/make_gif.py` 拼成 `preview_combo_chain.gif`）。
 > 跳跃那张由 `tools/anim_capture/jump_capture.tscn` 抓 → `preview_jump_instant.gif`。
 > 处决特写两张由 `tools/anim_capture/execute_cine_capture.tscn` 抓（真跑一次处决、让分镜导演驱动相机）→ 取关键帧用 `grid.py` 拼成 `preview_execute_cine_poses.png`、用 `make_gif.py` 拼成 `preview_execute_cine.gif`。
+> 狼两张由 `tools/anim_capture/wolf_capture.tscn` 抓（真跑 `wolf.tscn`、相机每帧跟住狼、`--fixed-fps 30` 固定步长）→ `make_gif.py` 合成。
 > ⚠️ 清单里所有 `docs/preview*` 预览图**已在 `.gitignore` 里忽略**（连同 `assets/**/previews/`）—— 仅为控制仓库体积：本地保留、仓库不带图，clone 下来看不到图时跑对应工具重出即可。
 
 ## 环境
@@ -82,7 +85,8 @@ project.godot            # 引擎配置（3D 渲染 / Jolt 物理 / 主场景 / 
 scenes/
   main/main.tscn         # 主场景（程序化构建环境 + 生成管理）
   player/player.tscn     # 玩家（胶囊碰撞 + Health）
-  enemy/enemy.tscn       # 红甲守卫
+  enemy/enemy.tscn       # 红甲守卫（两足 + 武器）
+  enemy/wolf.tscn        # 狼（四足、徒手；与守卫共用 scripts/enemy/enemy.gd）
   camera/camera.tscn     # 追尾镜头
   ui/hud.tscn            # HUD
 scripts/
@@ -98,6 +102,12 @@ scripts/
   camera/cinematic_director.gd # 处决特写分镜导演（接管相机 + 相对取景分镜表 + 遮幅黑边）
   ui/hud.gd                    # HUD 构建与更新
   main/main.gd                 # 主场景逻辑
+assets/                    # 美术资产（源工程在 E:\blender\blenderproject\，不在本仓库）
+  enemies/wolf_01/       # 狼：wolf_rigged.glb（22 骨 / 6 段动画）
+  enemies/brute_01/      # 红甲守卫：brute_rigged.glb + club_01.glb
+  characters/ weapons/   # 玩家骑士 / 武器（见 docs/GAME_DESIGN.md「美术资产管线」）
+maps/
+  wolf_test.tscn         # 狼试玩地图（把 enemy_scene 覆盖成狼；另有 forest_clearing.tscn）
 tools/…                    # 校验/抓帧工具（见下方「动画 QA 工具」）
 docs/GAME_DESIGN.md       # 设计文档与后续方向
 ```
@@ -117,12 +127,13 @@ docs/GAME_DESIGN.md       # 设计文档与后续方向
 ### ⚡ 一条命令跑全部探针（推荐）
 
 ```powershell
-.\tools\run_probes.ps1              # 四套全跑：m1 339 + quest 113 + lock 62 + possess 36 = 550 条断言
-.\tools\run_probes.ps1 -Only m1     # 只跑一套（m1 / quest / lock / possess）
+.\tools\run_probes.ps1              # 全跑：4 套探针（m1 339 + quest 113 + lock 62 + possess 36 = 550 断言）+ 5 个资产验证器
+.\tools\run_probes.ps1 -Only m1     # 只跑一套探针（m1 / quest / lock / possess）
+.\tools\run_probes.ps1 -Verify      # 只跑 5 个资产验证器（跳过 4 套探针）
 ```
 
-脚本会逐套打印 `断言 通过数/基准数`，并在断言数与基准不符时**黄色告警**（防止断言被悄悄增删）。
-`exit=0` = 全过。
+脚本会逐套打印 `断言 通过数/基准数`，并在断言数与基准不符时**黄色告警**（防止断言被悄悄增删）；
+资产验证器**按退出码**判过（逐条打印 `[OK]/[FAIL] 名称 exit=N`）。任一项失败总 `exit=1`，全过 `exit=0`。
 
 > **⚠️ 绝不要用 `--script` 跑探针**，也别在编辑器里对探针的 `.gd` 点「运行」。
 > 探针是 `extends Node`，**必须**作为 `.tscn` 启动。用错命令会得到两种**完全不提正确做法**的报错：
@@ -173,7 +184,7 @@ docs/GAME_DESIGN.md       # 设计文档与后续方向
 
 | 工具 | 用途 |
 |---|---|
-| **`tools/run_probes.ps1`** | ⚡ **跑全部回归探针**（m1/quest/lock/possess，共 550 条断言）：`.\tools\run_probes.ps1`，可加 `-Only m1` 只跑一套。逐套打印通过数并与基准比对（数字不符会告警）。**改完代码优先跑这个** |
+| **`tools/run_probes.ps1`** | ⚡ **跑全部回归探针 + 资产验证器**：4 套探针（m1/quest/lock/possess，共 **550 条断言**）+ 5 个资产验证器（`verify_enemy_model` / `verify_enemy_wolf` / `verify_wolf_hitbox` / `verify_wolf_death` / `verify_brute_death`）。`.\tools\run_probes.ps1`，可加 `-Only m1` 只跑一套、`-Verify` 只跑验证器。探针逐套打印通过数并与基准比对（数字不符会告警）；验证器**按退出码**判过、逐条打印 `[OK]/[FAIL] 名称 exit=N`。**改完代码优先跑这个** |
 | `tools/inspect_model.gd` | 打印 GLB 的节点树/骨骼/动画列表与时长 |
 | `tools/inspect_anim.gd` | 打印某条动画的每条轨道与关键帧数值（看清位移/旋转幅度） |
 | `tools/anim_capture/dodge_capture.tscn` | 自动演示 **行走 → 挥砍 → 跳跃 → 前冲 → 后撤**，配合 `--write-movie` 抓帧 |
@@ -185,6 +196,7 @@ docs/GAME_DESIGN.md       # 设计文档与后续方向
 | `tools/anim_capture/jump_capture.tscn` | 自动演示 **按住跳（≈1.2m）→ 落地 → 轻点小跳**，并打印"起跳前 / ★起跳瞬间 / 上升中 / 最高点 / 落地"的帧号。用于确认「按一下立即离地」的观感（起跳动画取消后新增，2026-09-21） |
 | `tools/anim_capture/execute_cine_capture.tscn` | 加载**真实主场景**、真的触发一次**处决**、让**分镜导演自己驱动相机**，把玩家**实际看到的那一路镜头**逐帧落盘（含慢动作摊帧），脚本打印"特写接管 / 遮幅到位 / ★★命中切点 / 拉回收招 / 慢动作谷底与回升 / 相机交还"的帧号。⚠ 不加 `--headless`；⚠ 落盘 PNG 序号 = `Engine.get_frames_drawn() − 1`（差 1 帧）；⚠ 关键帧判定用 **fov 门限**（`FOV_NEAR_CUT` 54 / `FOV_PULL_BACK` 55），**改分镜 fov 就要同步改** |
 | `tools/anim_capture/cine_frame_sweep.tscn` | 处决第 2 刀**取景候选 sweep**（临时对比工具）：把玩家摆到"命中那一拍"的姿势、冻结双方，在一次现场里渲 6 组候选取景（A 为旧值）→ 用 `grid.py` 拼图横向对比。用来自查"断言证明不了好看"的构图问题（见下方「处决特写分镜」一节） |
+| `tools/anim_capture/wolf_capture.tscn` | 引擎内实拍**狼的 6 段表现**（idle → 中速/全速 trot → `AttackWindup→Attack` → `Hit` → `Death`），相机**每帧跟住狼**、步态段正侧视、招式段斜前 45°，脚本打印各片段的 `CAPTURE_SEG <名> frame=N` 帧号。⚠ 不加 `--headless`；用 `--fixed-fps 30` 固定步长抓帧。出片 → `docs/preview_wolf_walk.gif` / `preview_wolf_combat.gif` |
 | `tools/gen_sfx.py` | **程序化合成音效**（纯 Python 无第三方依赖）：`python tools/gen_sfx.py assets/audio/sfx` 重新生成轻挥/重挥/命中三个 wav。内置"滤波器发散"质量护栏 |
 | `tools/glb_anim_probe.py` | 直接解析 GLB 的 JSON chunk 打印**动画名 / 网格名清单**（**不经过 Godot**，一秒出结果）。覆盖 `assets/` 之前先用它确认"新 GLB 里到底有没有我要的动画" |
 | `tools/autotest/lock_toggle_probe.tscn` | **锁定输入边沿对抗性探针**（62 条断言，headless 即可跑）：专打"按住 → 点击切换"的边界 —— 长按中键 2s 只翻转一次、仅松手不解锁、连续点击奇偶翻转、范围外点击不自锁且无残留标记、锁定中目标销毁 / 死亡两条退化路径、目标 A 死亡当场改锁 B、不碰中键不得自锁。与主测试分工：主测试测**业务闭环**，本探针测**输入边沿语义**。运行命令见上方「验证方式（命令行）」 |
@@ -193,6 +205,11 @@ docs/GAME_DESIGN.md       # 设计文档与后续方向
 | `tools/img_probe/montage.py` | 把一串抓帧 PNG **横向拼成一条静态对比条**（`--label` 逐格贴标签）——张数少（3~4 张）时最直接 |
 | `tools/img_probe/grid.py` | 把一串抓帧 PNG **拼成网格**（`grid.py <out.png> <每行张数> <图...>`）。⚠️ 张数一多横排会变成 10000px+ 的细长条、被压到看不清，这时用网格版；`montage.py` 与它功能相近，**拼多张一律用 `grid.py`** |
 | `tools/img_probe/make_gif.py` | 把一串抓帧 PNG 合成 **GIF 动图**（`--fps` / `--every` / `--width` / `--loop`）。★ 与上面两个**互补**：静态条看**姿势**，GIF 看**节奏**（连击接段、顿帧定格这类"帧与帧之间"的东西，静态图上根本看不出来）。⚠️ 需 Pillow |
+| `tools/verify_enemy_model.gd` | **资产验证器**（`--script` 类）：核对守卫模型 —— 骨骼数 / **6 段**动画名与时长（含 glTF 1 帧偏移）/ 武器挂点对齐 / `export` 数值。exit=0 即通过 |
+| `tools/verify_enemy_wolf.gd` | **资产验证器**（`--script` 类）：核对狼模型 —— 骨骼 **22** / 无 `weapon.R` / 6 段动画名与时长 / 缩放与脚底对齐 / `enemy_weapon_path` 空串**静默跳过** / `export` 数值 / `wolf_test.tscn` 地图接线 |
+| `tools/verify_wolf_hitbox.tscn` | **资产验证器**（`.tscn` 类）：把玩家摆在狼正前 1.3m、让狼真跑一遍 `WINDUP→STRIKE`，断言玩家**真的掉血 12**（实机物理帧跑出来的，不是算坐标） |
+| `tools/verify_wolf_death.tscn` | **资产验证器**（`.tscn` 类）：狼死亡观感 —— 尸体 `scale` 恒 1、不叠加程序化栽倒（`\|rot.x\|≈0`）、在 `Death` 长度 + 0.25s 后清场 |
+| `tools/verify_brute_death.tscn` | **资产验证器**（`.tscn` 类）：守卫 `Death` 观感 —— 尸体不缩小、不栽倒、**末帧骨骼不复位**（root 保持 Death 末帧 92° 大角度）、在 `max(1.2, Death 长度 + 0.25)` 后清场 |
 
 抓帧示例：
 

@@ -16,7 +16,10 @@ extends Node3D
 
 ## ---- 预加载场景（只加载一次，避免每帧重复读盘）----
 const PLAYER_SCENE := preload("res://scenes/player/player.tscn")
-const ENEMY_SCENE := preload("res://scenes/enemy/enemy.tscn")
+## ★ 敌人场景改成 @export：默认仍是 enemy.tscn（红甲守卫）。
+##   某个关卡想换物种，就在它自己的 .tscn 里覆盖这个 export，不必动本脚本。
+##   ⚠️ 现有 scenes/main/main.tscn 不覆盖它 ⇒ 默认就是守卫，行为不变。
+@export var enemy_scene: PackedScene = preload("res://scenes/enemy/enemy.tscn")
 const HUD_SCENE := preload("res://scenes/ui/hud.tscn")
 const CAMERA_SCENE := preload("res://scenes/camera/camera.tscn")
 ## 【调试】角色切换器（纯脚本节点，不用做场景）
@@ -128,7 +131,9 @@ func _spawn_player() -> void:
 func _spawn_enemy() -> void:
 	if is_instance_valid(_enemy):       # 旧敌人可能仍在场上(死亡动画未播完)
 		_enemy.queue_free()
-	_enemy = ENEMY_SCENE.instantiate() as EnemyBrute
+	if enemy_scene == null:
+		return
+	_enemy = enemy_scene.instantiate() as EnemyBrute
 	add_child(_enemy)
 	_enemy.global_position = ENEMY_SPAWN
 	_enemy.died.connect(_on_enemy_died)
