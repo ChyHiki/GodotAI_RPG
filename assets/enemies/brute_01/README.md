@@ -8,7 +8,7 @@
 
 | 路径 | 内容 |
 | --- | --- |
-| `brute_rigged.glb` | 绑定好的模型：1 网格 + **21 根骨骼**（Skin）+ **5 段动画**，**不含武器** |
+| `brute_rigged.glb` | 绑定好的模型：1 网格 + **21 根骨骼**（Skin）+ **6 段动画**，**不含武器** |
 | `club_01.glb` | 大棒槌，**独立资产**（原点 = 握把中心，槌头沿自身局部 −Z） |
 | `previews/` | 各动画代表帧（`stand_front.png`、`walk_13_contact_R.png`、`windup_13_raised.png`、`attack_07_strike.png`、`hit_04_recoil.png` 等） |
 
@@ -34,6 +34,7 @@
 | `AttackWindup` | 1–13 | 0.500 s | — | WINDUP（`windup_time`） |
 | `Attack` | 1–7 | 0.250 s | — | STRIKE（`strike_time`） |
 | `Hit` | 1–11 | 0.417 s | — | STAGGER（`_stagger_time`：普通受击 0.4 s / 被完美格挡 **0.8 s**）；**BROKEN（失衡）**时按 0.6 s 播一遍后冻在末帧 |
+| `Death` | 1–31 | 1.250 s | — | DEAD（单次，播完**冻末帧**不复位）。塌倒：站立 → 双腿一软 → 向后坐倒 → **仰面塌地**；整段逐帧贴地（见源 README） |
 
 ### 被玩家"完美格挡"弹开：`deflect(duration, from_pos)`
 
@@ -117,6 +118,7 @@ Godot 导入时会把时间轴平移到从 `t = 0` 开始，但 **`Animation.len
 | `AttackWindup` | 0.5000 | **0.5417** |
 | `Attack` | 0.2500 | **0.2917** |
 | `Hit` | 0.4167 | **0.4583** |
+| `Death` | 1.2500 | **1.2917** |
 
 - **玩家模型 `player_knight.glb` 同样如此**，属管线固有行为，两边保持一致。
 - 循环段（Idle / Walk）源动画**首尾帧姿势完全相同**，所以 wrap 回 0 时姿势连续、
@@ -154,7 +156,7 @@ Godot 导入时会把时间轴平移到从 `t = 0` 开始，但 **`Animation.len
 
 ```gdscript
 # 外观在 _build_body() 里自动完成：
-#   优先 _setup_model()  →  识别 5 段动画、缩放对齐、挂武器
+#   优先 _setup_model()  →  识别 6 段动画、缩放对齐、挂武器
 #   失败则 _build_procedural_body()  →  回到旧的原语外观（删掉 glb 也不会崩）
 ```
 
@@ -172,7 +174,7 @@ anim.play("Hit")             # 受击硬直（倍速铺满 _stagger_time：普�
 ## 验证与重新生成
 
 ```bash
-# 资产自检（21 骨骼 / 挂点 / 缩放 / 5 动画时长 / 武器对齐；exit=0 即全过）
+# 资产自检（21 骨骼 / 挂点 / 缩放 / 6 动画时长 / 武器对齐；exit=0 即全过）
 D:\Godot_v4.7.2-stable_win64.exe\Godot_v4.7.2-stable_win64_console.exe --headless \
   --path D:\GodotProject\first-game --script res://tools/verify_enemy_model.gd
 
@@ -187,3 +189,9 @@ python E:\blender\blenderproject\enemies\brute_01\scripts\probe_glb_times.py \
 
 > ⚠️ **改完模型记得回来跑一次自检脚本** —— 尤其是"动画时长"和"武器对齐"两项，
 > 改了 Blender 的帧区间或挂点轴向，很容易在 Godot 侧悄悄错位。
+>
+> ⚠️ **覆盖 .glb 后若自检报"动画段数少了"，先清导入缓存再重导**：Godot 4.7.2 的
+> `--import` 偶尔会"更新了 `.godot/imported/<name>-*.md5` 却没换掉 `-*.scn`"，
+> 之后两次 `--import` 都会认为"已最新"而跳过，于是永远用旧的 `.scn`。
+> 处置：删掉该资产的 `-*.md5` / `-*.scn`（含残留 `*.tmp`）后重跑 `--import`，
+> 再用本自检脚本回读动画名确认（本项目 T04 真踩过：GLB 已是 6 段、Godot 只报 5 段）。

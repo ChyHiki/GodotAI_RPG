@@ -25,7 +25,8 @@ const TARGET_HEIGHT := 2.66
 ## 与 enemy.gd 的 ENEMY_WEAPON_ALIGN_LOCAL 保持一致（-Z 扳到挂点 +Y）
 const ALIGN_LOCAL := Transform3D(Basis(Vector3(1, 0, 0), PI / 2.0), Vector3.ZERO)
 ## 期望的动画名（enemy.gd 按关键字识别，这里核对实际导入名）
-const EXPECT_ANIMS := ["Idle", "Walk", "AttackWindup", "Attack", "Hit"]
+## ★ 6 段：Idle / Walk / AttackWindup / Attack / Hit / Death
+const EXPECT_ANIMS := ["Idle", "Walk", "AttackWindup", "Attack", "Hit", "Death"]
 
 var _fail := 0
 
@@ -97,8 +98,11 @@ func _init() -> void:
 			_check(names.has(a), "存在动画 %s" % a)
 		# 时长（enemy.gd 的状态机参数要对得上）
 		# 设计内容时长 = Blender 里 Action 帧区间的跨度（24 fps）
+		# ★★ design_len 的键必须与 EXPECT_ANIMS **完全同步**：下面 `design_len[a]`
+		#    若取到不存在的键会返回 null，`null + frame_off` 会在运行时类型报错。
+		#    Death 帧 1..31（30 帧内容 = 1.250s），与狼的 1.0s 不同 → 故意更长（重甲倒得慢）。
 		var design_len := {"Idle": 2.000, "Walk": 1.000, "AttackWindup": 0.500,
-			"Attack": 0.250, "Hit": 0.4167}
+			"Attack": 0.250, "Hit": 0.4167, "Death": 1.250}
 		# 见文件头"帧偏移约定"：Godot length = 源末帧绝对时刻 = 内容时长 + 1/24
 		var frame_off := 1.0 / 24.0
 		for a in EXPECT_ANIMS:
