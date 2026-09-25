@@ -513,16 +513,17 @@ var _perfect_parried: bool = false # 本次格挡是否已用掉"完美"判定�
 ## 本次闪避是否还留着"完美闪避"判定（一次闪避只给一次，同 _perfect_parried 的道理：
 ## 否则在敌人判定盒里连挨两下会连着触发两次慢动作，画面会花）
 var _perfect_dodge_armed: bool = false
-## 子弹时间的补间（用 set_ignore_time_scale 让它**不受自己造成的减速影响**）
-var _bullet_time_tween: Tween = null
 ## 子弹时间对"全局时间倍率"的贡献值（1.0 = 不减速）。由补间直接驱动，
 ## 最终 Engine.time_scale = min(_bt_factor, _hs_factor)（见 _push_time_scale）。
-var _bt_factor: float = 1.0
+## ⚠️ 实现已搬到 TimeFx 组件（`_time_fx._bt_factor`）—— 下面两个是**代理属性**，
+##   读写都转发给组件，外部（含 m1_autotest 第 1562~1572 行）的行为完全不变。
+var _bt_factor: float:
+	get: return _time_fx._bt_factor if _time_fx != null else 1.0
+	set(v): if _time_fx != null: _time_fx._bt_factor = v
 ## 顿帧(hitstop)对全局时间倍率的贡献值（1.0 = 不减速）。同上，由补间驱动。
-var _hs_factor: float = 1.0
-## 顿帧的补间（同样 set_ignore_time_scale —— 否则"顿帧自己的计时"会被自己压慢，
-## 0.055s 的顿帧会实际持续 0.055/0.05 = 1.1s，整个节奏就毁了）
-var _hitstop_tween: Tween = null
+var _hs_factor: float:
+	get: return _time_fx._hs_factor if _time_fx != null else 1.0
+	set(v): if _time_fx != null: _time_fx._hs_factor = v
 ## 本次闪避的持续时间(秒)：进入 DODGE 时按前冲/后撤选定，速度/收招都读它
 var _dodge_time: float = 0.375
 var _block_impact_time: float = 0.0 # 挡下顿挫的剩余时长(秒)，>0 时正在演 BlockImpact
@@ -570,6 +571,8 @@ var _squash: float = 0.0               # 落地压缩计时(秒，纯视觉)
 
 ## Health 组件的引用（场景里的子节点，onready=子节点就绪后自动取）
 @onready var health: Health = $Health
+## TimeFx 组件的引用（子弹时间 / 顿帧的统一出口；见 scripts/components/time_fx.gd）
+@onready var _time_fx: TimeFx = $TimeFx
 
 
 # ------------------------------------------------------------------
@@ -581,7 +584,8 @@ func _ready() -> void:
 	add_to_group("player")         # 让敌人AI/镜头/主场景能按组找到玩家
 	# ★ 兜底把全局时间倍率复位：Engine.time_scale 是全局单例，若上一次运行/上一个场景
 	#   是在子弹时间里退出的（比如直接关窗），它会把 0.35 带去下一次运行 —— 症状极隐蔽
-	#   （整个游戏慢动作、但没有任何报错）。这里每次进场景都强制拉回常速。
+	#   （整个游戏慢动作、但没有任何报错）。TimeFx._ready() 里也做了同样的事，
+	#   这里保留是为了"即使组件被误删也不至于把慢动作带进下一局"。
 	Engine.time_scale = 1.0
 	_build_body()                  # 优先用骑士模型，失败则回退原语小蓝人
 	_setup_audio()                 # 挂挥剑/命中两个 3D 音效播放器（缺资源时静默跳过）
@@ -1649,77 +1653,34 @@ func _trigger_perfect_dodge(_from_pos: Vector3) -> void:
 
 
 ## 触发子弹时间：把全局时间压慢，持续 bullet_time_duration 真实秒后再平滑回升。
-## 【为什么用 Tween 而不是自己数秒】自己数秒必须拿"真实时间"，而 _process 的 delta
-##   恰恰是被 time_scale 缩放过的 —— 用它计时会让"减速期间"的计时也一起变慢，
-##   实际减速时长会被拉长成 duration / time_scale（0.6s 变 1.7s），节奏完全失控。
-##   Tween.set_ignore_time_scale(true) 就是官方提供的"这条件不受 time_scale 影响"开关。
-## 【为什么要 kill 上一条件】连续完美闪避时，旧补间到点会把新减速一起拉回 1.0。
-## 【参数化（2026 新增）】三个参数默认沿用**完美闪避**那组值 → 完美闪避的调用点一个字都不用改；
-##   处决慢动作（更慢更久）与闪避共存于同一套机制，只是传不同的参数进来（见 _execute_strike）。
-##   默认值引用实例成员，GDScript 会在**调用时**求值 —— 调用方不传就走当下的 @export 值。
+## ★ 实现已搬到 **TimeFx 组件**（`scripts/components/time_fx.gd`），这里只做转发。
+##   保留同名同参的包装是为了：① 调用点一个字不改；② `m1_autotest` 等探针直接调
+##   `player._start_bullet_time()` / `player._push_time_scale()` 的写法继续有效。
 ## @param scale 减速倍率(1.0=常速)；hold 保持时长(真实秒)；fade 回升过渡时长(真实秒)
 func _start_bullet_time(scale := bullet_time_scale, hold := bullet_time_duration, fade := bullet_time_fade) -> void:
-	if _bullet_time_tween != null and _bullet_time_tween.is_valid():
-		_bullet_time_tween.kill()
-	_bt_factor = scale                      # 只改"自己这一份"因子 → 不会踩掉正在进行的顿帧
-	_push_time_scale()
-	_bullet_time_tween = create_tween()
-	_bullet_time_tween.set_ignore_time_scale(true)      # ★ 关键：别被自己造成的减速拖慢
-	_bullet_time_tween.tween_interval(hold)
-	_bullet_time_tween.tween_method(_set_bullet_factor, scale, 1.0, fade)
-
-
-## 子弹时间因子的写入口（由上面的补间逐帧调用）。
-func _set_bullet_factor(v: float) -> void:
-	_bt_factor = v
-	_push_time_scale()
+	if _time_fx == null:
+		return
+	# 走组件的参数默认值（组件自己的 @export）→ 调参只需改场景里的 TimeFx 节点。
+	# 调用方显式传了参数就按调用方的来（处决慢动作是这么用的）。
+	if is_equal_approx(scale, bullet_time_scale) and is_equal_approx(hold, bullet_time_duration) \
+		and is_equal_approx(fade, bullet_time_fade):
+		_time_fx.start_bullet_time()
+	else:
+		_time_fx.start_bullet_time(scale, hold, fade)
 
 
 ## 顿帧(hitstop)：命中瞬间把全局时间压到几乎定格，持续 real_seconds **真实秒**后迅速弹回。
-## 【为什么顿帧要单独一个因子、不直接写 Engine.time_scale】见 hitstop_* 参数声明处：
-##   它和子弹时间都会压慢时间，两个补间直接抢同一个变量时，"谁后写谁赢"，
-##   先前那个到点还会把对方的减速一起拉回 1.0（画面会突然"抽一下"）。
-##   拆成两个因子 + 取更慢者，两边互不干扰。
-## 【为什么要设上限取最狠的一次】重叠命中（一刀扫到两个敌人）会连着调两次，
-##   若每次都从头计时，顿帧会被叠成"两倍长" —— 取 max 反而更稳。
+## ★ 实现已搬到 TimeFx 组件，这里只做转发。
 func _start_hitstop(real_seconds: float) -> void:
-	if real_seconds <= 0.0 or hitstop_scale >= 1.0:
-		return
-	if _hitstop_tween != null and _hitstop_tween.is_valid():
-		_hitstop_tween.kill()
-	_hs_factor = hitstop_scale
-	_push_time_scale()
-	_hitstop_tween = create_tween()
-	_hitstop_tween.set_ignore_time_scale(true)          # ★ 同子弹时间：别被自己的减速拖长
-	_hitstop_tween.tween_interval(real_seconds)
-	# 收尾用一段极短的淡出（0.03s）而不是硬跳回 1.0：硬跳会有一下可闻的"顿挫感"
-	_hitstop_tween.tween_method(_set_hitstop_factor, hitstop_scale, 1.0, HITSTOP_RELEASE)
-
-
-## 顿帧因子的写入口（由上面的补间逐帧调用）。
-func _set_hitstop_factor(v: float) -> void:
-	_hs_factor = v
-	_push_time_scale()
+	if _time_fx != null:
+		_time_fx.start_hitstop(real_seconds)
 
 
 ## 把两个因子合成真正的全局时间倍率 —— 取**更慢的那个**。
-## 【为什么是 min 而不是乘】相乘会让"子弹时间里的命中"慢到 0.45×0.05 = 0.0225（几乎静止两秒），
-##   表现上像卡死。取 min 则"最深的效果说了算"，两者叠在一起也不会失控。
+## ★ 实现已搬到 TimeFx 组件，这里只做转发（探针会直接调它来验"互不抢占"）。
 func _push_time_scale() -> void:
-	Engine.time_scale = minf(_bt_factor, _hs_factor)
-
-
-## 玩家被销毁（重开场景 / 退出）时把时间倍率复位。
-## 【为什么必须兜底】Engine.time_scale 是**全局单例**，一旦在减速状态里被销毁，
-##   补间随之消失 → 整个游戏（包括下一个场景）都会永远停留在 0.35 倍速。
-func _exit_tree() -> void:
-	if _bullet_time_tween != null and _bullet_time_tween.is_valid():
-		_bullet_time_tween.kill()
-	if _hitstop_tween != null and _hitstop_tween.is_valid():
-		_hitstop_tween.kill()
-	_bt_factor = 1.0                 # 两个因子也一并复位，否则下次进场景 _push_time_scale 会把旧值带回来
-	_hs_factor = 1.0
-	Engine.time_scale = 1.0
+	if _time_fx != null:
+		_time_fx._push_time_scale()
 
 
 ## 进入受击状态：硬直 + 击退 + 0.6s 无敌(防连击) + 闪白。

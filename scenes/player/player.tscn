@@ -2,6 +2,7 @@
 
 [ext_resource type="Script" uid="uid://lv0s1dwyfr3o" path="res://scripts/player/player.gd" id="1"]
 [ext_resource type="Script" uid="uid://b0gftyfkumm4d" path="res://scripts/components/health.gd" id="2"]
+[ext_resource type="Script" path="res://scripts/components/time_fx.gd" id="3"]
 
 [sub_resource type="CapsuleShape3D" id="CapsuleShape_body"]
 radius = 0.35
@@ -16,3 +17,6 @@ shape = SubResource("CapsuleShape_body")
 
 [node name="Health" type="Node" parent="." unique_id=122720528]
 script = ExtResource("2")
+
+[node name="TimeFx" type="Node" parent="." unique_id=122720529]
+script = ExtResource("3")
