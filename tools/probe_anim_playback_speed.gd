@@ -256,5 +256,30 @@ func _ready() -> void:
 	await get_tree().physics_frame
 	print("  反例：改成 play(custom_speed=1.4096) ⇒ get_playing_speed()=%.4f（应 ≈ %.4f）" % [
 		anim.get_playing_speed(), probe_want * 1.4096])
+
+	# ================= 判定 4：_play_once 是否也是两层（playing = spd^2 ?）=================
+	# 【为什么要隔离复现】_play_once（enemy.gd:1181-1191）两行是：
+	#     换名那帧  play(name, blend, spd)     # custom_speed = spd
+	#     之后每帧  speed_scale = spd          # 属性 = spd
+	# 若两层成立 ⇒ 稳态 playing = spd × spd = spd^2，而注释明写意图是"拉伸到 duration 秒播完"
+	# ⇒ 要求 playing == spd。本判定直接按同样顺序调用同样的 API，不受 AI 每帧干扰。
+	print("")
+	print("【判定 4】_play_once 是否也是两层（稳态 playing = spd^2 而不是 spd）？")
+	var a_name := "AttackWindup"
+	if anim.has_animation(a_name):
+		var alen := anim.get_animation(a_name).length
+		var dur := float(wolf.get("windup_time"))
+		var spd := alen / maxf(0.05, dur)
+		anim.play(a_name, 0.0, spd)     # 模拟"换名那一帧"
+		anim.speed_scale = spd           # 模拟"之后每帧"（else 分支）
+		await get_tree().physics_frame
+		var p4 := anim.get_playing_speed()
+		print("  %s：length=%.4fs  windup_time=%.4fs ⇒ spd = length/duration = %.4f" % [a_name, alen, dur, spd])
+		print("  按 _play_once 的两行调用后 ⇒ get_playing_speed() = %.4f" % p4)
+		print("    若【两层】成立，应 ≈ spd^2 = %.4f" % (spd * spd))
+		print("    若【单层】成立，应 ≈ spd   = %.4f" % spd)
+		print("  ⇒ 实测吻合 %s" % ("★ spd^2 ⇒ _play_once **确实双重复用**" if absf(p4 - spd * spd) < 0.01 else ("spd ⇒ 单层，无此问题" if absf(p4 - spd) < 0.01 else "两者都不吻合，需人工判断")))
+	else:
+		print("  ✗ 找不到动画 %s，判定 4 跳过" % a_name)
 	print("")
 	get_tree().quit(0)
