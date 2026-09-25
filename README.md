@@ -19,9 +19,8 @@
 - `preview_execute_cine_poses.png` —— **分镜三刀代表帧横条**：用来确认三刀的**取景互不相同**、且第 2 刀近景能读出"剑砍进敌人"（GIF 看**切镜节奏**、横条看**逐刀取景**）
 - `lockon_04_marker_body_center.png` / `lockon_05_marker_zoom.png`（在 `assets/characters/player_knight/previews/`）
   —— **锁定标记**：点一次中键锁定后敌人**身体中心**出现一颗白色亮点（右图为同一帧放大；近白像素实测 20×20 px、再点一次解除后 0 个）
-- `preview_wolf_walk.gif` —— **狼的步态动图**（引擎内实拍）：站立 → 中速 trot（**2.5 m/s**）→ 全速 trot（**4.2 m/s**），正侧视看四足**对角步态**、以及"全速下步子够不够大"。★ 步态是"帧与帧之间"的东西，静态图上根本读不出来，所以用 GIF
-  - ⚠️ **这张 GIF 已过时（2026-09-25）**：它是在 **方案 β 之前**抓的，而那正是 `_play_loop` 两层相乘的坑最显形的时候 —— 图上"全速"那一档的**实际步频是随机打折的**（同二进制量到过 1.0155 / 0.5704 / 2.4668 / 1.4096 等值），所以它**不能**用来论证"全速下步子够不够大"。β 之后 `get_playing_speed() ≡ speed_scale`，且狼 `move_speed` 已 4.2 → **3.4**，重跑一遍才有意义（`tools/anim_capture/wolf_capture.tscn`）
-- `preview_wolf_combat.gif` —— **狼的招式动图**（引擎内实拍）：`AttackWindup→Attack`（下蹲蓄力 → 前扑咬合，斜前 45°）→ `Hit` 受击 → `Death` 塌倒后**尸体停留约 1.29s 再消失**
+- `preview_wolf_walk.gif` —— **狼的步态与 Walk→Run 换挡动图**（引擎内实拍，2026-09-26 重出，提交 `8922a93` 之后）：站立 → 中速 **2.5 m/s**（`want = 2.5/1.1724 = 2.132 < 2.40` ⇒ **播 Walk**）→ **2.0→3.4 m/s 连续升速**（专拍换挡瞬间：速度越过 **2.8138 m/s** 时 `want` 越过 2.40，当场由 Walk 切 **Run**）→ 全速 **3.4 m/s**（`want = 2.900 ≥ 2.40` ⇒ **播 Run / gallop**）。正侧视，看四足**对角步态**如何随速度从 trot 渐变到 gallop、以及 gallop 腾空相的**四足离地**。★ 换挡是"帧与帧之间"的**读感变化**，子串匹配 / 档位阈值逻辑在静态图上完全读不出来，所以必须用 GIF；**"哪一档播 Walk、哪一档播 Run"由抓帧脚本日志当场证明**（`CAPTURE_STATE` / `CAPTURE_SWITCH` 会打印 `current_animation` + `get_playing_speed()` + `speed_scale`）。本次 GIF 与日志出自**同一二进制、同一次抓帧**，且是在 `8922a93` 之后 `get_playing_speed() ≡ speed_scale` 的语义下拍的
+- `preview_wolf_combat.gif` —— **狼的招式动图**（引擎内实拍，2026-09-26 一并重出）：`AttackWindup→Attack`（下蹲蓄力 → 前扑咬合，斜前 45°）→ `Hit` 受击 → `Death` 塌倒后**尸体停留约 1.29s 再消失**。`T08` 改的是移动段（Walk/Run 换挡），**不影响**招式/受击/死亡三段；但它与 walk 那张同为 **2026-09-25 方案 β 之前**同一次抓帧的产物（`_play_once` 的 `Attack/Hit/Death` 倍速是**两层相乘的旧值**），所以随本次抓帧**一并重出**为 β 之后的正确倍速
 
 > 前几张贴图由 `tools/fx_capture/fx_capture.tscn` 逐帧抓出来的，改完特效可以重跑一遍对比；
 > 生活三张由 `tools/life_capture/life_capture.tscn` 抓（演"待机 → 挨打 → 阵亡"）。
@@ -30,7 +29,7 @@
 > 拼成 `preview_combo_poses.png`；第二幕真一整套连击 → 用 `tools/img_probe/make_gif.py` 拼成 `preview_combo_chain.gif`）。
 > 跳跃那张由 `tools/anim_capture/jump_capture.tscn` 抓 → `preview_jump_instant.gif`。
 > 处决特写两张由 `tools/anim_capture/execute_cine_capture.tscn` 抓（真跑一次处决、让分镜导演驱动相机）→ 取关键帧用 `grid.py` 拼成 `preview_execute_cine_poses.png`、用 `make_gif.py` 拼成 `preview_execute_cine.gif`。
-> 狼两张由 `tools/anim_capture/wolf_capture.tscn` 抓（真跑 `wolf.tscn`、相机每帧跟住狼、`--fixed-fps 30` 固定步长）→ `make_gif.py` 合成。
+> 狼两张由 `tools/anim_capture/wolf_capture.tscn` 抓（真跑 `wolf.tscn`、相机每帧跟住狼、`--fixed-fps 30` 固定步长；步态段含 `idle → 2.5 m/s Walk → 2.0→3.4 连续升速换挡 → 3.4 m/s Run`，脚本按段/按换挡点打印真实 `current_animation` 与 `get_playing_speed()`）→ `make_gif.py` 合成。
 > ⚠️ 清单里所有 `docs/preview*` 预览图**已在 `.gitignore` 里忽略**（连同 `assets/**/previews/`）—— 仅为控制仓库体积：本地保留、仓库不带图，clone 下来看不到图时跑对应工具重出即可。
 
 ## 环境
@@ -104,7 +103,7 @@ scripts/
   ui/hud.gd                    # HUD 构建与更新
   main/main.gd                 # 主场景逻辑
 assets/                    # 美术资产（源工程在 E:\blender\blenderproject\，不在本仓库）
-  enemies/wolf_01/       # 狼：wolf_rigged.glb（22 骨 / 6 段动画）
+  enemies/wolf_01/       # 狼：wolf_rigged.glb（22 骨 / 7 段动画）
   enemies/brute_01/      # 红甲守卫：brute_rigged.glb + club_01.glb
   characters/ weapons/   # 玩家骑士 / 武器（见 docs/GAME_DESIGN.md「美术资产管线」）
 maps/
@@ -197,7 +196,7 @@ docs/GAME_DESIGN.md       # 设计文档与后续方向
 | `tools/anim_capture/jump_capture.tscn` | 自动演示 **按住跳（≈1.2m）→ 落地 → 轻点小跳**，并打印"起跳前 / ★起跳瞬间 / 上升中 / 最高点 / 落地"的帧号。用于确认「按一下立即离地」的观感（起跳动画取消后新增，2026-09-21） |
 | `tools/anim_capture/execute_cine_capture.tscn` | 加载**真实主场景**、真的触发一次**处决**、让**分镜导演自己驱动相机**，把玩家**实际看到的那一路镜头**逐帧落盘（含慢动作摊帧），脚本打印"特写接管 / 遮幅到位 / ★★命中切点 / 拉回收招 / 慢动作谷底与回升 / 相机交还"的帧号。⚠ 不加 `--headless`；⚠ 落盘 PNG 序号 = `Engine.get_frames_drawn() − 1`（差 1 帧）；⚠ 关键帧判定用 **fov 门限**（`FOV_NEAR_CUT` 54 / `FOV_PULL_BACK` 55），**改分镜 fov 就要同步改** |
 | `tools/anim_capture/cine_frame_sweep.tscn` | 处决第 2 刀**取景候选 sweep**（临时对比工具）：把玩家摆到"命中那一拍"的姿势、冻结双方，在一次现场里渲 6 组候选取景（A 为旧值）→ 用 `grid.py` 拼图横向对比。用来自查"断言证明不了好看"的构图问题（见下方「处决特写分镜」一节） |
-| `tools/anim_capture/wolf_capture.tscn` | 引擎内实拍**狼的 6 段表现**（idle → 中速/全速 trot → `AttackWindup→Attack` → `Hit` → `Death`），相机**每帧跟住狼**、步态段正侧视、招式段斜前 45°，脚本打印各片段的 `CAPTURE_SEG <名> frame=N` 帧号。⚠ 不加 `--headless`；用 `--fixed-fps 30` 固定步长抓帧。出片 → `docs/preview_wolf_walk.gif` / `preview_wolf_combat.gif` |
+| `tools/anim_capture/wolf_capture.tscn` | 引擎内实拍**狼的 7 段表现**（idle → **2.5 m/s Walk**（`want 2.132 < 2.40`）→ **2.0→3.4 连续升速的 Walk→Run 换挡** → **3.4 m/s Run**（`want 2.900 ≥ 2.40`）→ `AttackWindup→Attack` → `Hit` → `Death`），相机**每帧跟住狼**、步态段正侧视、招式段斜前 45°，脚本打印各片段的 `CAPTURE_SEG <名> frame=N` 帧号，以及该刻/稳定后的**真实播放状态** `CAPTURE_STATE [start\|settle] anim= playing= speed_scale=` 与换挡点 `CAPTURE_SWITCH … cmd= vel= anim=`。⚠ 不加 `--headless`；用 `--fixed-fps 30` 固定步长抓帧。出片 → `docs/preview_wolf_walk.gif` / `preview_wolf_combat.gif` |
 | `tools/gen_sfx.py` | **程序化合成音效**（纯 Python 无第三方依赖）：`python tools/gen_sfx.py assets/audio/sfx` 重新生成轻挥/重挥/命中三个 wav。内置"滤波器发散"质量护栏 |
 | `tools/glb_anim_probe.py` | 直接解析 GLB 的 JSON chunk 打印**动画名 / 网格名清单**（**不经过 Godot**，一秒出结果）。覆盖 `assets/` 之前先用它确认"新 GLB 里到底有没有我要的动画" |
 | `tools/autotest/lock_toggle_probe.tscn` | **锁定输入边沿对抗性探针**（62 条断言，headless 即可跑）：专打"按住 → 点击切换"的边界 —— 长按中键 2s 只翻转一次、仅松手不解锁、连续点击奇偶翻转、范围外点击不自锁且无残留标记、锁定中目标销毁 / 死亡两条退化路径、目标 A 死亡当场改锁 B、不碰中键不得自锁。与主测试分工：主测试测**业务闭环**，本探针测**输入边沿语义**。运行命令见上方「验证方式（命令行）」 |
@@ -207,7 +206,7 @@ docs/GAME_DESIGN.md       # 设计文档与后续方向
 | `tools/img_probe/grid.py` | 把一串抓帧 PNG **拼成网格**（`grid.py <out.png> <每行张数> <图...>`）。⚠️ 张数一多横排会变成 10000px+ 的细长条、被压到看不清，这时用网格版；`montage.py` 与它功能相近，**拼多张一律用 `grid.py`** |
 | `tools/img_probe/make_gif.py` | 把一串抓帧 PNG 合成 **GIF 动图**（`--fps` / `--every` / `--width` / `--loop`）。★ 与上面两个**互补**：静态条看**姿势**，GIF 看**节奏**（连击接段、顿帧定格这类"帧与帧之间"的东西，静态图上根本看不出来）。⚠️ 需 Pillow |
 | `tools/verify_enemy_model.gd` | **资产验证器**（`--script` 类）：核对守卫模型 —— 骨骼数 / **6 段**动画名与时长（含 glTF 1 帧偏移）/ 武器挂点对齐 / `export` 数值。exit=0 即通过 |
-| `tools/verify_enemy_wolf.gd` | **资产验证器**（`--script` 类）：核对狼模型 —— 骨骼 **22** / 无 `weapon.R` / 6 段动画名与时长 / 缩放与脚底对齐 / `enemy_weapon_path` 空串**静默跳过** / `export` 数值 / `wolf_test.tscn` 地图接线 |
+| `tools/verify_enemy_wolf.gd` | **资产验证器**（`--script` 类）：核对狼模型 —— 骨骼 **22** / 无 `weapon.R` / **7 段**动画名与时长 / 缩放与脚底对齐 / `enemy_weapon_path` 空串**静默跳过** / `export` 数值 / `wolf_test.tscn` 地图接线 |
 | `tools/verify_wolf_hitbox.tscn` | **资产验证器**（`.tscn` 类）：把玩家摆在狼正前 1.3m、让狼真跑一遍 `WINDUP→STRIKE`，断言玩家**真的掉血 12**（实机物理帧跑出来的，不是算坐标） |
 | `tools/verify_wolf_death.tscn` | **资产验证器**（`.tscn` 类）：狼死亡观感 —— 尸体 `scale` 恒 1、不叠加程序化栽倒（`\|rot.x\|≈0`）、在 `Death` 长度 + 0.25s 后清场 |
 | `tools/verify_brute_death.tscn` | **资产验证器**（`.tscn` 类）：守卫 `Death` 观感 —— 尸体不缩小、不栽倒、**末帧骨骼不复位**（root 保持 Death 末帧 92° 大角度）、在 `max(1.2, Death 长度 + 0.25)` 后清场 |
@@ -271,6 +270,12 @@ docs/GAME_DESIGN.md       # 设计文档与后续方向
   ① `BlockHold` / `BlockImpact` 的名字里都含 `block`，必须**先判 hold / impact 再判裸 block**，否则两段都会被吃成"格挡起手"（敌人脚本的 `AttackWindup` / `Attack` 是同一个坑）；
   ② `WalkStrafeLeft` / `WalkStrafeRight` / `WalkBack` 都含 `walk`，必须**排在裸 `walk` 之前**，顺序写反 `_walk_anim` 会被后出现的名字覆盖掉；
   ③ `Slash2` / `Slash3` 都含 `slash`，必须**排在裸 `slash` 之前** —— 同样的覆盖陷阱，症状是"三段连击全长一个样"且第 1 段播的是第 3 段的动画（`m1_autotest` 有一条"三段必须是三段不同动画"的外层防线专盯它）
+- ⚠️ **敌人侧识别链用的是「子串匹配」，天然带"静默吃错段"的固有风险（如实记录，未修复）**：
+  敌人（狼 / 守卫）走的是 `enemy.gd::_setup_animations()` —— 它对每段动画名做 `to_lower().replace("_","")` 后**逐条 `key.contains(...)` 匹配**（`windup` → 蓄力；`death`/`die` → 死亡；`attack`/`slash` → 攻击；`gallop`/`run` → Run；`walk` → Walk；`idle` → 待机；`hit`/`hurt` → 受击）。
+  这意味着**将来任何物种只要有一段段名里含 `run` 子串（例如 `RunJump`、`RunAttack`），就会被静默识别成 Run 段** —— 不报错、不告警，只是那一档会播错动画。
+  **当前资产集合已枚举确认无此情况**（狼 **7** 段：`Idle/Walk/Run/AttackWindup/Attack/Hit/Death`；守卫 **6** 段），所以现在没有实际故障；
+  但这是识别链的**固有风险**：**加新段名前必须回头核一遍这些子串**（`windup`/`death`/`die`/`attack`/`slash`/`gallop`/`run`/`walk`/`idle`/`hit`/`hurt`）。
+  ★ **注意：现状没有被修复**（要真正消除需改成精确名 / 正则匹配 / 加互斥前缀）—— 这里只是把风险如实记下来（DESIGN-RUN v4 §7.3 / §12 第 8 条要求）
 - **循环必须显式打开**：glTF 没有循环标记，代码会把 Walk / **侧移三段** / Idle / JumpAir / BlockHold 设为 `LOOP_LINEAR`，否则只播一次就定住
 - **骨骼复位**：骨骼动画一停播，骨骼会冻在停播那一帧（走到一半停下→僵在迈步中途；落地→僵在蜷腿姿势）。所以"没有对应动画"的状态（落地后等）统一调用 `_anim_to_rest()` 把骨骼复位到绑定姿势，再由脚本叠加整体姿态与落地压缩。**但死亡是例外**：`Death` 播完**故意不复位**，尸体定格在躺平那帧
 - **跳跃：按一下立即离地**（`jump_prep_time = 0`）。原本是"两段式起跳"——按下后先进 `JUMP_PREP` 在地面播 `JumpStart` 蹬地动作、0.18s 蓄力结束才由 `_launch_jump()` 给向上速度并切 `JUMP`（播 `JumpAir`），好处是蹬地动画与"离地"这个事件对齐。

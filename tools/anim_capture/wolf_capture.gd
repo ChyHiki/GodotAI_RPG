@@ -1,9 +1,9 @@
 extends Node
 ## ============================================================
-## 引擎内实拍狼的 6 段表现（给"要不要加大步幅 / 招式读不读得懂"提供真实证据）。
+## 引擎内实拍狼的 7 段表现（给"Walk/Run 换挡读不读得出 / 招式读不读得懂"提供真实证据）。
 ## ============================================================
 ## 为什么必须有它：Blender 侧 previews 只是离线渲染，**必须在 Godot 里真跑一遍**
-##   才能看到"缩放 0.885 后 + 追敌镜头下"的真实观感（步态、招式预警、死亡塌倒）。
+##   才能看到"缩放 0.885 后 + 追敌镜头下"的真实观感（步态、换挡、招式预警、死亡塌倒）。
 ##
 ## 用法（★ 不要 --headless：headless 用空渲染驱动，出不来图；★ 输出目录必须先建好）：
 ##   Godot_v4.7.2-stable_win64_console.exe --path D:\GodotProject\first-game \
@@ -12,21 +12,41 @@ extends Node
 ##     res://tools/anim_capture/wolf_capture.tscn
 ##
 ## 输出：`.tmp_wolf/frame%08d.png`（每渲染一帧一张，序号 = Engine.get_frames_drawn() − 1）
-##   本脚本在每个片段开始处打印 `CAPTURE_SEG <名字> frame=<frames_drawn>`，
-##   据此把序列切成两段 GIF：1/2/3 → walk；4/5/6 → combat。
+##   本脚本在每个片段开头打印 `CAPTURE_SEG <名字> frame=<frames_drawn>`，
+##   并在该刻 + 稳定后各打印一条**真实播放状态** `CAPTURE_STATE <名字>[start|settle]
+##   anim=… playing=… speed_scale=…`；ramp 段还会在**动画名每次变化**时打印
+##   `CAPTURE_SWITCH …` —— 这三类日志就是"这一刻播的到底是 Walk 还是 Run、倍速多少"的
+##   当场证据（β 之后 get_playing_speed() ≡ speed_scale，两条日志里的两个数应当一致）。
+##   据此把序列切成两段 GIF：1/2/3/4 → walk；5/6/7 → combat。
+##
+## 【★ 2026-09-25 起 Walk/Run 换挡已接线（狼 move_speed = 3.4，提交 8922a93）】
+##   档位判据 = "Walk 的倍速需求"（无量纲）want = spd / walk_natural_speed(1.1724)：
+##     want ≥ run_switch_speed_scale(2.40)                      ⇒ 起切 Run（gallop）
+##     want < 2.40 × (1 − 0.15) = 2.04                          ⇒ 回切 Walk（15% 滞回）
+##   换算成速度：> 2.8138 m/s 播 Run；已播 Run 时 < 2.3917 m/s 才回 Walk。
+##   所以本脚本三段速度各自播什么，**不是猜的**：
+##     2.5 m/s ⇒ want = 2.5/1.1724 = 2.132 < 2.40 ⇒ **Walk**（trot）
+##     3.4 m/s ⇒ want = 3.4/1.1724 = 2.900 ≥ 2.40 ⇒ **Run**（gallop）
+##   这两个稳态档 + 中间 2.0→3.4 连续升速的换挡段，正好构成 "Walk vs Run" 的对照证据。
+##   ⚠️ 本脚本的常量/注释已按上述语义更正 —— 旧版把 3.4 那段叫 `trot_full` 并当 Walk 描述，
+##      从 T08 起那一段实播的其实是 Run，旧名字/注释全是错的。
 ##
 ## 【相机】不用玩家视角 —— 那看不清步态。这里自带一台**固定机位 + 每帧跟住狼**的相机：
-##   步态段用**正侧视**（看四足迈步），招式段用**斜前 45°**（看下蹲蓄力→前扑咬合）。
+##   步态段用**正侧视**（看四足迈步 / 腾空相），招式段用**斜前 45°**（看下蹲蓄力→前扑咬合）。
 ## ============================================================
 
 const WOLF_TSCN := "res://scenes/enemy/wolf.tscn"
-const SPEED_TROT_MED := 2.5      # 中速 trot（m/s）
-const SPEED_TROT_FULL := 3.4     # 全速 trot（= wolf.tscn 的 move_speed；β 后由 4.2 改为 3.4）
+const SPEED_WALK_MED := 2.5      # 中速：want = 2.5/1.1724 = 2.132 < 2.40 ⇒ 播 **Walk**
+const SPEED_RUN_FULL := 3.4      # 全速（= wolf.tscn 的 move_speed）：want = 2.900 ≥ 2.40 ⇒ 播 **Run**
+const RAMP_FROM := 2.0           # 换挡段起始速度（want = 1.706 < 2.40 ⇒ 起于 Walk）
+const RAMP_TO := 3.4             # 换挡段结束速度（want = 2.900 ≥ 2.40 ⇒ 收于 Run）
+const RAMP_TIME := 3.0           # 换挡段时长(秒) —— 连续升速，专门抓换挡瞬间
 
 var _wolf: Node3D = null
 var _cam: Camera3D = null
 var _cam_offset: Vector3 = Vector3(0, 0.85, 3.4)      # 近景：狼约占画面高 ~40%，腿看得清
 var _cam_look_at: Vector3 = Vector3(0, 0.50, 0)
+var _last_anim: String = ""      # ramp 段用来检测"播放中的动画名发生了变化"（换挡瞬间）
 
 
 func _ready() -> void:
@@ -41,13 +61,14 @@ func _ready() -> void:
 	add_child(_wolf)
 	# ★ 关掉 AI、强制 CHASE → 由本脚本用 manual_wish_dir 精确控制速度（见 enemy.gd 的手动操控说明）
 	_wolf.set("ai_enabled", false)
-	_wolf.set("state", 1)                     # 1 = CHASE（这样 _animate_model 才会播 Walk）
+	_wolf.set("state", 1)                     # 1 = CHASE（这样 _animate_model 才会按速度选 Walk/Run）
 	_wolf.call("_face_instant_dir", Vector3(1, 0, 0))
 	await get_tree().process_frame
 	await get_tree().process_frame
-	print("CAPTURE: 狼动画 = Idle:%s Walk:%s Windup:%s Attack:%s Hit:%s Death:%s" % [
-		_wolf.get("_idle_anim"), _wolf.get("_walk_anim"), _wolf.get("_windup_anim"),
-		_wolf.get("_attack_anim"), _wolf.get("_hit_anim"), _wolf.get("_death_anim")])
+	print("CAPTURE: 狼动画 = Idle:%s Walk:%s Run:%s Windup:%s Attack:%s Hit:%s Death:%s" % [
+		_wolf.get("_idle_anim"), _wolf.get("_walk_anim"), _wolf.get("_run_anim"),
+		_wolf.get("_windup_anim"), _wolf.get("_attack_anim"), _wolf.get("_hit_anim"),
+		_wolf.get("_death_anim")])
 
 	await _wait(0.4)                          # 让场景稳定几帧
 
@@ -55,39 +76,57 @@ func _ready() -> void:
 	_set_cam(Vector3(0, 0.85, 3.4), Vector3(0, 0.50, 0))
 	_stop()
 	_seg("idle")
-	await _wait(2.0)
+	await _wait(0.6)
+	_print_state("idle", "settle")
+	await _wait(1.4)
 
-	# ---------- 2) trot 中速（2.5 m/s，正侧视看四足步态）----------
-	_seg("trot_med_2.5")
-	_drive(SPEED_TROT_MED)
-	await _wait(3.0)
+	# ---------- 2) Walk 中速（2.5 m/s ⇒ want 2.132 < 2.40，正侧视看四足步态）----------
+	_seg("walk_med_2.5")
+	_drive(SPEED_WALK_MED)
+	await _wait(0.5)                          # 起播并稳定（速度插值到位、动画名切完）
+	_print_state("walk_med_2.5", "settle")
+	await _wait(2.5)
 
-	# ---------- 3) trot 全速（3.4 m/s，正侧视、镜头跟住）----------
-	# ⚠️ 这一段**不再是**"要不要加大步幅"的证据了：旧版在 4.2 m/s 抓的时候正撞上 `_play_loop`
-	#    两层相乘的坑，画面上的实际步频是随机打折的（量到过 1.0155/0.5704/2.4668/1.4096），
-	#    拿它论证步幅会得出错误结论。β 之后 `get_playing_speed() ≡ speed_scale`，这里的 3.4
-	#    是**真实**步频；"够不够大"这件事改由 Run 段规格（DESIGN-RUN.md）回答。
-	_seg("trot_full_3.4")
-	_drive(SPEED_TROT_FULL)
-	await _wait(3.0)
+	# ---------- 3) 换挡段：2.0 → 3.4 m/s 连续升速，专抓 Walk → Run 的换挡瞬间 ----------
+	# 【为什么单独拍一段】"从走切到跑"的价值全在**读感随速度变化**上：同一只狼、
+	#   同一个机位，脚步从 trot 逐渐变成 gallop。这件事**只在帧与帧之间**存在，
+	#   子串匹配 / 档位阈值逻辑在**静态图**上完全读不出来 —— 非动图不可。
+	#   速度扫过 2.8138 m/s 时 want 越过 2.40，日志里会打印 CAPTURE_SWITCH。
+	_seg("ramp_walk_to_run")
+	await _ramp_walk_to_run(RAMP_FROM, RAMP_TO, RAMP_TIME)
+
+	# ---------- 4) Run 全速（3.4 m/s ⇒ want 2.900 ≥ 2.40，正侧视、镜头跟住）----------
+	# 【证据】这一段**实播的是 Run（gallop）而不是 Walk**；β 之后 get_playing_speed() ≡ speed_scale，
+	#   所以这里的 3.4 是**真实**步频，不再是旧版两层相乘那个随机打折的假值。
+	_seg("run_full_3.4")
+	_drive(SPEED_RUN_FULL)
+	await _wait(0.5)
+	_print_state("run_full_3.4", "settle")
+	await _wait(2.5)
 	_stop()
 	await _wait(0.5)
 
-	# ---------- 4) AttackWindup → Attack（斜前 45°，看"下蹲蓄力 → 前扑咬合"）----------
+	# ---------- 5) AttackWindup → Attack（斜前 45°，看"下蹲蓄力 → 前扑咬合"）----------
 	_set_cam(Vector3(3.0, 1.2, 3.0), Vector3(0, 0.48, 0))
 	_seg("attack")
 	_wolf.call("request_attack", Vector3(1, 0, 0))
-	await _wait(2.4)
+	await _wait(0.4)                          # 仍处于蓄力相
+	_print_state("attack_windup", "settle")
+	await _wait(2.0)
 
-	# ---------- 5) Hit（受击硬直：看被打退）----------
+	# ---------- 6) Hit（受击硬直：看被打退）----------
 	_seg("hit")
 	_wolf.call("take_damage", 12, _wolf.global_position + Vector3(-1, 0, 0))
-	await _wait(1.0)
+	await _wait(0.3)
+	_print_state("hit", "settle")
+	await _wait(0.7)
 
-	# ---------- 6) Death + 尸体停留（看侧躺是否自然、~1.29s 后消失）----------
+	# ---------- 7) Death + 尸体停留（看侧躺是否自然、~1.29s 后消失）----------
 	_seg("death")
 	_wolf.call("take_damage", 999, _wolf.global_position + Vector3(-1, 0, 0))
-	await _wait(3.2)
+	await _wait(0.4)
+	_print_state("death", "settle")
+	await _wait(2.8)
 
 	print("CAPTURE: 结束 frames_drawn=%d" % Engine.get_frames_drawn())
 	get_tree().quit(0)
@@ -169,8 +208,57 @@ func _stop() -> void:
 func _seg(name: String) -> void:
 	# PNG 序号 = frames_drawn − 1（见项目 README 抓帧坑①），这里如实打印 frames_drawn
 	print("CAPTURE_SEG %s frame=%d" % [name, Engine.get_frames_drawn()])
+	_print_state(name, "start")
+
+
+## 连续把狼的**指令速度**从 from_spd 升到 to_spd（时长 dur 秒），并在每一帧记录
+## "播放中的动画名是否发生了变化"。Walk→Run 换挡点因此会在日志里留下一行
+## `CAPTURE_SWITCH`（带当时的指令速度、**实际速度**、动画名与实播倍速）—— 这是
+## "换挡确实发生过、发生在哪个速度上"的当场证据。
+func _ramp_walk_to_run(from_spd: float, to_spd: float, dur: float) -> void:
+	_last_anim = ""
+	var steps := maxi(1, int(round(dur * 30.0)))   # 抓帧固定 30fps
+	for i in range(steps + 1):
+		var spd := lerpf(from_spd, to_spd, float(i) / float(steps))
+		_drive(spd)
+		await get_tree().process_frame
+		_log_switch(spd)
+	_print_state("ramp_walk_to_run", "end")
 
 
 ## 按**真实（固定步长）时间**等待 —— --fixed-fps 下 timer 走的是固定 dt，切段因此可复现。
 func _wait(sec: float) -> void:
 	await get_tree().create_timer(sec, true, false, true).timeout
+
+
+# ------------------------------------------------------------------ 播放状态取证
+
+## 读取狼此刻**真实的播放状态**。返回 [current_animation, get_playing_speed(), speed_scale]。
+## β 之后 `get_playing_speed() ≡ speed_scale`，两个数应当一致 —— 打印出来就是当场验证它。
+func _anim_state() -> Array:
+	var ap: AnimationPlayer = null
+	if _wolf != null and is_instance_valid(_wolf):
+		ap = _wolf.get("_anim_player") as AnimationPlayer
+	if ap == null:
+		return ["<none>", 0.0, 0.0]
+	return [String(ap.current_animation), ap.get_playing_speed(), ap.speed_scale]
+
+
+func _print_state(tag: String, when: String) -> void:
+	var st := _anim_state()
+	print("CAPTURE_STATE %s[%s] anim=%s playing=%.4f speed_scale=%.4f" % [
+		tag, when, st[0], st[1], st[2]])
+
+
+## ramp 段用：动画名一变就打一行，附上当时的**指令速度**与**实际速度**（velocity）。
+func _log_switch(cmd_spd: float) -> void:
+	var st := _anim_state()
+	if st[0] == _last_anim:
+		return
+	_last_anim = st[0]
+	var vel := Vector3.ZERO
+	if _wolf != null and is_instance_valid(_wolf):
+		vel = _wolf.get("velocity") as Vector3
+	var actual := Vector2(vel.x, vel.z).length()
+	print("CAPTURE_SWITCH frame=%d cmd=%.3f vel=%.3f anim=%s playing=%.4f speed_scale=%.4f" % [
+		Engine.get_frames_drawn(), cmd_spd, actual, st[0], st[1], st[2]])
