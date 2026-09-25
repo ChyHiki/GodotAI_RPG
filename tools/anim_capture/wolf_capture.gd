@@ -62,8 +62,12 @@ func _ready() -> void:
 	_drive(SPEED_TROT_MED)
 	await _wait(3.0)
 
-	# ---------- 3) ★ trot 全速（4.2 m/s，正侧视、镜头跟住）—— 判断"要不要加大步幅"的核心证据 ----------
-	_seg("trot_full_4.2")
+	# ---------- 3) trot 全速（3.4 m/s，正侧视、镜头跟住）----------
+	# ⚠️ 这一段**不再是**"要不要加大步幅"的证据了：旧版在 4.2 m/s 抓的时候正撞上 `_play_loop`
+	#    两层相乘的坑，画面上的实际步频是随机打折的（量到过 1.0155/0.5704/2.4668/1.4096），
+	#    拿它论证步幅会得出错误结论。β 之后 `get_playing_speed() ≡ speed_scale`，这里的 3.4
+	#    是**真实**步频；"够不够大"这件事改由 Run 段规格（DESIGN-RUN.md）回答。
+	_seg("trot_full_3.4")
 	_drive(SPEED_TROT_FULL)
 	await _wait(3.0)
 	_stop()

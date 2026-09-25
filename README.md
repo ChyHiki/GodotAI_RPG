@@ -19,7 +19,8 @@
 - `preview_execute_cine_poses.png` —— **分镜三刀代表帧横条**：用来确认三刀的**取景互不相同**、且第 2 刀近景能读出"剑砍进敌人"（GIF 看**切镜节奏**、横条看**逐刀取景**）
 - `lockon_04_marker_body_center.png` / `lockon_05_marker_zoom.png`（在 `assets/characters/player_knight/previews/`）
   —— **锁定标记**：点一次中键锁定后敌人**身体中心**出现一颗白色亮点（右图为同一帧放大；近白像素实测 20×20 px、再点一次解除后 0 个）
-- `preview_wolf_walk.gif` —— **狼的步态动图**（引擎内实拍）：站立 → 中速 trot（**2.5 m/s**）→ **全速 trot（4.2 m/s）**，正侧视看四足**对角步态**、以及"全速下步子够不够大"。★ 步态是"帧与帧之间"的东西，静态图上根本读不出来，所以用 GIF
+- `preview_wolf_walk.gif` —— **狼的步态动图**（引擎内实拍）：站立 → 中速 trot（**2.5 m/s**）→ 全速 trot（**4.2 m/s**），正侧视看四足**对角步态**、以及"全速下步子够不够大"。★ 步态是"帧与帧之间"的东西，静态图上根本读不出来，所以用 GIF
+  - ⚠️ **这张 GIF 已过时（2026-09-25）**：它是在 **方案 β 之前**抓的，而那正是 `_play_loop` 两层相乘的坑最显形的时候 —— 图上"全速"那一档的**实际步频是随机打折的**（同二进制量到过 1.0155 / 0.5704 / 2.4668 / 1.4096 等值），所以它**不能**用来论证"全速下步子够不够大"。β 之后 `get_playing_speed() ≡ speed_scale`，且狼 `move_speed` 已 4.2 → **3.4**，重跑一遍才有意义（`tools/anim_capture/wolf_capture.tscn`）
 - `preview_wolf_combat.gif` —— **狼的招式动图**（引擎内实拍）：`AttackWindup→Attack`（下蹲蓄力 → 前扑咬合，斜前 45°）→ `Hit` 受击 → `Death` 塌倒后**尸体停留约 1.29s 再消失**
 
 > 前几张贴图由 `tools/fx_capture/fx_capture.tscn` 逐帧抓出来的，改完特效可以重跑一遍对比；
