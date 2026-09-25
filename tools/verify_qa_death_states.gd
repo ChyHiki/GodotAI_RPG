@@ -33,6 +33,13 @@ const DIRTY_SCALE_MIN := 0.02  # WINDUP 脉动必须偏离到这么大才继续�
 const DIRTY_ROTZ_MIN := 0.03   # BROKEN 打晃必须打到这么大才继续
 const BONE_MIN_DEG := 10.0     # 骨骼**未复位**阈值：末帧至少有一根骨偏离 rest ≥ 此值
 
+## ★ Death 动画时长自检（wolf_01）。本探针改成帧驱动后对**帧率**不敏感，
+##   但 pivot/scale/骨骼 各断言都与 Death **时长**无关 → 若资产把 Death 改长/改短，
+##   探针会**静默通过**。故这里显式钉死时长：wolf Death 内容 1.000s（24fps，帧 1..25），
+##   Godot length = 内容 + 1/24 帧偏移 = 1.0417s。
+##   （注：队伍里常引用的 1.250s 是**红甲守卫**的 Death 内容时长，不是狼的；本探针只跑狼。）
+const EXPECT_DEATH_LEN := 1.0417
+
 var _fail := 0
 
 
@@ -126,6 +133,12 @@ func _run_case(case_name: String) -> void:
 	_check(wolf.state == EnemyBrute.State.DEAD, "切到 DEAD")
 	var anim: AnimationPlayer = wolf.get("_anim_player")
 	_check(anim != null and anim.current_animation == "Death", "死亡时开始播 Death")
+	# ★ Death 时长自检：资产若改时长 → 这里显式 FAIL（而不是静默通过）
+	var da: Animation = anim.get_animation(wolf.get("_death_anim")) if anim != null else null
+	var dlen := -1.0 if da == null else da.length
+	_check(absf(dlen - EXPECT_DEATH_LEN) < 0.005,
+		"[%s] ★ Death 时长 == %.4fs（改时长会 fail，不静默通过）" % [case_name, EXPECT_DEATH_LEN],
+		"实际 %.4fs" % dlen)
 
 	var t0 := Time.get_ticks_msec()
 	var frames := 0
