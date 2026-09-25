@@ -12,10 +12,11 @@
 ##
 ## WHAT IT RUNS
 ##   1) Four gameplay probes (.tscn, from the autotest suite) -- with a hard assertion baseline.
-##   2) Seven asset validators -- added in T05 so they stop rotting in `tools/`:
+##   2) Eight asset validators -- added in T05 so they stop rotting in `tools/`:
 ##        --script class : verify_enemy_model.gd, verify_enemy_wolf.gd
 ##        .tscn   class : verify_wolf_hitbox.tscn, verify_wolf_death.tscn, verify_brute_death.tscn,
-##                          verify_qa_negative.tscn, verify_qa_death_states.tscn
+##                          verify_qa_negative.tscn, verify_qa_death_states.tscn,
+##                          verify_playback_invariant.tscn, verify_wolf_run.tscn
 ##      The two classes run differently (see the manifests below) -- do NOT mix them up:
 ##        * `--script res://...gd`  -> only works for scripts that `extends SceneTree`.
 ##        * `res://...tscn`         -> for `extends Node` scripts (need a scene + autoloads).
@@ -23,7 +24,7 @@
 ## USAGE
 ##   .\tools\run_probes.ps1               # probes + validators (default)
 ##   .\tools\run_probes.ps1 -Only m1      # one probe: m1 | quest | lock | possess
-##   .\tools\run_probes.ps1 -Verify       # only the 7 validators (skip the 4 probes)
+##   .\tools\run_probes.ps1 -Verify       # only the 8 validators (skip the 4 probes)
 ##   .\tools\run_probes.ps1 -Verbose      # print log tails for unhealthy entries
 ##
 ## EXIT CODE: 0 = everything passed; 1 = something failed; 3 = Godot binary not found.
@@ -86,12 +87,36 @@ $SceneValidators = @(
     @{ Name = "verify_brute_death"; Path = "res://tools/verify_brute_death.tscn" },
     @{ Name = "verify_qa_negative"; Path = "res://tools/verify_qa_negative.tscn" },
     @{ Name = "verify_qa_death_states"; Path = "res://tools/verify_qa_death_states.tscn" },
-    @{ Name = "verify_playback_invariant"; Path = "res://tools/verify_playback_invariant.tscn" }
+    @{ Name = "verify_playback_invariant"; Path = "res://tools/verify_playback_invariant.tscn" },
+    @{ Name = "verify_wolf_run"; Path = "res://tools/verify_wolf_run.tscn" }
 )
+
+# ------------------------------------------------------------------
+# Suite-size self-check (DESIGN-RUN section 9.4 / D2).
+# The manifests above must contain exactly the entries we expect. If a future edit silently
+# drops (or adds) an entry, the total changes and this check fails -- which is the whole point:
+# a silently-dropped validator would otherwise just "not run" and the suite would look green.
+# Baseline derivation (express it as "<current> + <added in this task>", NEVER copy a stale
+# literal from a design doc):
+#     T05 : 4 probes + 7 validators = 11
+#     T06 : + verify_playback_invariant      = 12   (software-engineer-2)
+#     T08 : + verify_wolf_run (current + 1)  = 13
+$ExpectedSuiteCount = 13
+$actualSuiteCount = $Probes.Count + $ScriptValidators.Count + $SceneValidators.Count
 
 $failed = @()
 $mismatch = @()
 $vfailed = @()
+
+# Suite-size self-check: a mismatch means a probe/validator was silently added or dropped.
+if ($actualSuiteCount -ne $ExpectedSuiteCount) {
+    Write-Host ("[x] suite size = {0}, expected {1}  (probes {2} + script {3} + scene {4})" -f `
+        $actualSuiteCount, $ExpectedSuiteCount, $Probes.Count, $ScriptValidators.Count, $SceneValidators.Count) -ForegroundColor Red
+    $vfailed += "suite-size"
+} else {
+    Write-Host ("[i] suite size OK: {0} = {1} probes + {2} script + {3} scene validators" -f `
+        $actualSuiteCount, $Probes.Count, $ScriptValidators.Count, $SceneValidators.Count) -ForegroundColor DarkGray
+}
 
 if (-not $Verify) {
     Write-Host "== gameplay probes ==" -ForegroundColor Cyan

@@ -67,6 +67,14 @@ func _gen_wolf() -> bool:
 	#   它只约束**单帧** want=clamp(spd/1.1724, 0.4, 3.8)，而旧代码的实播倍速是
 	#   speed_scale × 被 play() 冻结的 custom，稳态可达 3.58×1.74≈6.2 —— 完全越过了这个"上限"。
 	#   数值 3.8 保持不动（改它会翻别的断言）；倍速真源改由 enemy.gd 的 β 修法保证。
+	#   ★ 加 Run 之后 Walk 只在 want < run_switch_speed_scale(2.40) 时才被选中 ⇒ 3.8 已成死代码，
+	#     但数值仍安全、且 verify_enemy_wolf.gd 把它钉在 3.8 ⇒ **不动**。
+	# ---- ★ Run 段参数（T08）----
+	# ⚠️ 本行必须与 scenes/enemy/wolf.tscn 里的 run_natural_speed 手工同步：
+	#   两边各写一份（生成器 + 场景），是因为 .tscn 的既有数值允许在编辑器里手工微调，
+	#   而重跑本生成器会**覆盖** .tscn（见文件头"已有的 .tscn 会被覆盖"）。
+	#   若哪天只改了一边，verify_enemy_wolf.gd 的 run_natural_speed 断言会立刻变红。
+	root.set("run_natural_speed", 2.7104)  # ★v4 实测值（probe_run_ground 口径；解析 2.7132）
 	root.set("corpse_linger_time", 1.2)
 	root.set("hitbox_size", Vector3(1.4, 1.1, 1.5))
 	root.set("hitbox_offset", Vector3(0.0, 0.65, -1.2))

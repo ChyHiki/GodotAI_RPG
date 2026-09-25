@@ -291,6 +291,13 @@ func _check_chase_endpoint(e: EnemyBrute, anim: AnimationPlayer, player: Node3D,
 	e.move_speed = move_speed
 	e.state = EnemyBrute.State.CHASE
 	e._state_time = 0.0
+	# ★ T08（Run 段接线后）：本用例只钉 **Walk** 的 clamp 端点（下限 0.4 / 上限 walk_max_speed_scale）。
+	#   狼的 Walk 上限端点 want == 3.8 ≥ 起切阈值 2.40，在有 Run 时会**合法地**切到 Run，
+	#   于是下面 `current_animation != _walk_anim` 永远命中、永远等不到 Walk 样本（body 恒 0）。
+	#   故本用例**临时关掉 Run**（run_natural_speed = 0.0）⇒ 恒 Walk，语义与"加 Run 之前"逐位一致。
+	#   狼的 **Run** clamp 端点（0.80 / 1.75）改由 tools/verify_wolf_run.gd 的 G-8 单独覆盖。
+	#   （守卫 `_run_anim == ""`，本行对它无影响。）
+	e.run_natural_speed = 0.0
 	var ok := false
 	var got := 0.0
 	var body := 0.0

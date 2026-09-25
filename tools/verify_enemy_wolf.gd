@@ -29,6 +29,9 @@ const TARGET_HEIGHT := 1.20
 ## ★ T07：新增 Run（横驰 gallop，循环段，与 Idle/Walk 同族）。
 const EXPECT_ANIMS := ["Idle", "Walk", "Run", "AttackWindup", "Attack", "Hit", "Death"]
 ## 狼 7 段动画的设计内容时长（Blender 里 Action 帧区间的跨度，24 fps）
+## ★★ DESIGN_LEN 的键必须与 EXPECT_ANIMS **完全同步**：下面 `DESIGN_LEN[a]`
+##    若取到不存在的键会返回 null，`null + frame_off` 会在运行时类型报错
+##    （verify_enemy_model.gd 已用注释把这条钉死，这里补齐同一条警告）。
 const DESIGN_LEN := {
 	"Idle": 2.000, "Walk": 1.000, "Run": 0.500, "AttackWindup": 0.500,
 	"Attack": 0.250, "Hit": 0.4167, "Death": 1.000,
@@ -200,6 +203,11 @@ func _initialize() -> void:
 		_check(absf(_f(wolf.get("move_speed")) - 3.4) < 0.001, "move_speed == 3.4")
 		_check(absf(_f(wolf.get("walk_natural_speed")) - 1.1724) < 0.0001, "walk_natural_speed == 1.1724")
 		_check(absf(_f(wolf.get("walk_max_speed_scale")) - 3.8) < 0.001, "walk_max_speed_scale == 3.8")
+		# ★ T08（G-9 家族）：狼的 Run 自然速度哨兵。
+		#   用途与上面两条完全相同 —— wolf.tscn 若被意外改回 0.0 / 旧值 / 解析值（2.7132），
+		#   或"场景一套、gen_wolf_scenes.gd 一套"漂移，这条立刻变红。
+		#   权威口径：2.7104（probe_run_ground 实测；解析 2.7132，见 DESIGN-RUN §5.4）。
+		_check(absf(_f(wolf.get("run_natural_speed")) - 2.7104) < 0.0001, "run_natural_speed == 2.7104")
 		_check(absf(_f(wolf.get("model_target_height")) - 1.20) < 0.001, "model_target_height == 1.20")
 		_check(int(_f(wolf.get("attack_damage"))) == 12, "attack_damage == 12")
 		_check(absf(_f(wolf.get("parry_poise_percent")) - 50.0) < 0.001, "parry_poise_percent == 50")

@@ -24,6 +24,7 @@ enemy_weapon_path = ""
 model_target_height = 1.2
 walk_natural_speed = 1.1724
 walk_max_speed_scale = 3.8
+run_natural_speed = 2.7104
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="." unique_id=1993310841]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.5, 0)

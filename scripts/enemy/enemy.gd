@@ -36,7 +36,8 @@ class_name EnemyBrute
 ## 【外观：模型优先，程序化兜底】
 ##   优先加载 @export 的 `enemy_model_path`（默认守卫 = assets/enemies/brute_01/brute_rigged.glb；
 ##   狼 = assets/enemies/wolf_01/wolf_rigged.glb），按状态机播放它自带的动作
-##   （Idle/Walk/AttackWindup/Attack/Hit/Death，狼与守卫均齐 6 段）；
+##   （Idle/Walk/AttackWindup/Attack/Hit/Death；★ 狼另有第 7 段 Run，用于高速追击，
+##     守卫无 Run → 恒播 Walk，见 _animate_model 的 CHASE 分支）；
 ##   模型加载失败（文件缺失/空网格）时自动回退到原来那套**程序化原语外观**，
 ##   也就是本文件下半部分的 _build_procedural_body / _animate_procedural。
 ##   两套外观的状态机逻辑完全一致，只是"怎么动"的实现不同。
@@ -180,6 +181,51 @@ const ENEMY_WEAPON_ALIGN_LOCAL := Transform3D(Basis(Vector3(1, 0, 0), PI / 2.0),
 ## 设上限的代价是移动极快时仍有轻微滑步；想彻底消除需要美术侧再出一段 Run。
 @export var walk_max_speed_scale: float = 2.0
 
+## 奔跑动画的"自然前进速度"(米/秒) = 一个周期的步幅 ÷ 周期时长。
+## 【为什么新增】狼的 move_speed = 3.4，而 Walk 的自然速度只有 1.1724 →
+##   需求倍速 2.90，屏幕读感是"快节奏小跑"而不是"扑过来"。狼补了一段 Run
+##   （自然速度 2.7104 m/s，★v4 实测值；v3 曾写 3.3257，已被实测证伪），
+##   3.4 / 2.7104 = 1.2544 落回"重定时仍自然"的区间（"扑"的读感出来了）。
+## 【0.0 的语义】= 该物种**没有** Run 段 → CHASE 永远走 Walk 那条路径
+##   （行为与"没有 Run"时相同）。守卫（brute_01）不使用本字段，保持默认 0.0，
+##   其 .tscn 无需任何改动 → 永远播 Walk（见 DESIGN-RUN §6.6a 与 G-5）。
+@export var run_natural_speed: float = 0.0
+
+## 奔跑动画的播放倍速下限。
+## 【为什么要下限】起切 Run 的瞬间若 speed_scale 太小，读感是"突然慢下来"。
+##   本值同时参与"切段阈值"的自洽约束（见 run_switch_speed_scale 的注释）。
+@export var run_min_speed_scale: float = 0.80
+
+## 奔跑动画的播放倍速上限。
+## 与 walk_max_speed_scale 同理：重定时超过 ~1.3 就开始读成"快放"。
+## ★ v4：狼满速（move_speed = 4.2，属于极限值）需要 1.5496，原值 1.60 只剩 3.2% 裕度
+##   ⇒ 提到 1.75（裕度 11.5%；也留出"未来把 move_speed 提到 ~4.7 也不截断"的余量）。
+##   常态（move_speed = 3.4）只需要 1.2544，离 1.75 很远 —— 正常路径不该碰到它。
+@export var run_max_speed_scale: float = 1.75
+
+## 切到 Run 的判据：**Walk 的倍速需求**达到该值即起切 Run。
+## 【为什么用"Walk 的倍速需求"而不是 m/s】它是无量纲量，物种无关：
+##   守卫 walk_natural_speed = 1.66、狼 = 1.1724，同一个阈值（2.40）在两边都指向
+##   "我要 2.4 倍于走路的步频了，该跑了"这**同一件事**，不必按物种重算。
+##   起切速度 = run_switch_speed_scale × walk_natural_speed
+##            （狼：2.40 × 1.1724 = 2.8138 m/s）。
+## 【自洽约束（必须满足，否则起切瞬间 Run 会被 clamp 到下限 → 脚滑）】
+##   run_switch_speed_scale × walk_natural_speed
+##       >= run_min_speed_scale × run_natural_speed      （等号是最紧的自洽点）
+##   狼：2.40 × 1.1724 = 2.8138 >= 0.80 × 2.7104 = 2.1683    ✓ 裕度 29.8%
+##     （解析口径用 run_nat = 2.7132 ⇒ 2.1706、裕度 29.6%，同一条约束，两个口径都过）
+##   等价下界：run_switch_speed_scale >= run_min × run_nat / walk_nat = 1.8492
+##     （★ v4：Run 变慢（3.3257→2.7104）后阈值下界从 2.2695 降到 1.8492，
+##       于是 2.40 的余量反而变大 —— 不要因为"余量大了"就去调高它。）
+@export var run_switch_speed_scale: float = 2.40
+
+## 滞回比例：已切到 Run 后，要等 Walk 的倍速需求跌破
+##   run_switch_speed_scale × (1 − run_switch_hysteresis)
+## 才回切 Walk。狼：2.40 × 0.85 = 2.04 → 2.04 × 1.1724 = 2.3917 m/s。
+## 【为什么需要】狼追到玩家身边会被"够近了"减速、被挡住会停下再冲，
+##   速度正好在阈值附近来回扫 → 没有滞回就会每帧 Walk/Run 互切（表现为抖动）。
+@export var run_switch_hysteresis: float = 0.15
+
 ## 动画之间的过渡混合时长(秒)。
 ## 【为什么需要】挥击动画收势停在"棒砸到身前地面"，而 Idle 起手是"棒垂在体侧"，
 ## 不对齐直接切会"啪"地闪一下。0.12s 的交叉淡入足够抹平，又不至于拖慢出招节奏。
@@ -202,6 +248,13 @@ var _lunge_dir: Vector3 = Vector3.ZERO  # 挥击时的前冲方向（出手瞬�
 ##   状态机只认 _stagger_time，判断逻辑因此不用改。
 var _stagger_time: float = 0.4
 
+## Run 段是否"上锁"（滞回状态）。没有 Run 段的物种恒为 false，不产生任何影响。
+## 由 _animate_model 的 CHASE 分支维护：
+##   want >= run_switch_speed_scale                                     → 置 true（起切 Run）
+##   已 true 且 want < run_switch_speed_scale × (1 − run_switch_hysteresis) → 置回 false（回切 Walk）
+## 【为什么要"锁"】滞回需要一个跨帧记忆：只看当前帧的速度会每帧互切（见 run_switch_hysteresis）。
+var _run_latched: bool = false
+
 
 # ------------------------------------------------------------------
 # 外观引用
@@ -221,6 +274,9 @@ var _skeleton: Skeleton3D = null
 ## 按名字识别到的动画（空字符串 = 该动作没有动画资源，走脚本姿态兜底）
 var _idle_anim: String = ""
 var _walk_anim: String = ""
+## ★ Run 动画（可选）：**只有** "识别到名字里含 run/gallop 的段" 且
+##   run_natural_speed > 0 时才会被播放。空串 = 该物种没有 Run → 走 Walk。
+var _run_anim: String = ""
 var _windup_anim: String = ""
 var _attack_anim: String = ""
 var _hit_anim: String = ""
@@ -849,18 +905,22 @@ func _register_mesh_materials(root: Node) -> void:
 		_register_mesh_materials(child)
 
 
-## 扫描模型自带的动画资源：找到 AnimationPlayer，并按名字识别 6 段动作。
+## 扫描模型自带的动画资源：找到 AnimationPlayer，并按名字识别各段动作（最多 7 段）。
 ## 识别规则（大小写无关、忽略下划线）：
 ##   含 windup                → 蓄力预警（AttackWindup）
 ##   含 death / die           → 死亡（Death，单次、末帧保持不复位）
 ##   含 attack / slash        → 挥击（Attack）
+##   含 run / gallop          → 奔跑（Run，循环，★ 可选：只有"有 Run 的物种"才有）
 ##   含 walk                  → 行走（循环）
 ##   含 idle                  → 待机（循环）
 ##   含 hit / hurt            → 受击硬直（Hit）
-## 【判断顺序很重要】两个坑都靠"先判更专有的关键字"躲开：
+## 【判断顺序很重要】三个坑都靠"先判更专有的关键字"躲开：
 ##   1) "AttackWindup" 里也含 "attack" → 必须**先判 windup 再判 attack**，
 ##      否则蓄力动画会被识别成挥击动画（表现为"举着棒子不动就突然打完了"）。
 ##   2) death 插在 windup 与 attack 之间：防御未来出现 "DeathHit" 这类名字时被 hit 抢走。
+##   3) run/gallop 插在 attack 与 walk 之间：attack 比移动语义更专有（未来若出现
+##      "RunAttack" 前冲撕咬，应归 attack）；而 run 比 walk 更专有（描述更窄的速度区间），
+##      所以 run 在 walk 之前 —— 否则名字里同时含 run 与 walk 的段会被 walk 吞掉。
 ## 改动画名时留意这一点。
 func _setup_animations(model: Node3D) -> void:
 	_anim_player = _find_animation_player(model)
@@ -876,6 +936,9 @@ func _setup_animations(model: Node3D) -> void:
 			_death_anim = String(anim_name)
 		elif key.contains("attack") or key.contains("slash"):
 			_attack_anim = String(anim_name)
+		elif key.contains("gallop") or key.contains("run"):    # ★ 新增：奔跑（循环）
+			_run_anim = String(anim_name)
+			_set_loop(_run_anim)   # 循环段必须开 LOOP，否则跑一次就定在末帧
 		elif key.contains("walk"):
 			_walk_anim = String(anim_name)
 			_set_loop(_walk_anim)
@@ -1231,13 +1294,38 @@ func _animate_model(delta: float) -> void:
 			# 待机：呼吸起伏循环
 			_play_loop(_idle_anim)
 		State.CHASE:
-			# 追击：走起来播 Walk（按"速度 ÷ 自然步速"调倍速，避免脚底打滑）；
+			# 追击：走起来播 Walk / Run（按"速度 ÷ 自然步速"调倍速，避免脚底打滑）；
 			# 站住（够近了/被挡住）回待机。
+			# ★ 没有 Run 段时（_run_anim 为空 或 run_natural_speed <= 0），
+			#   本分支退化为"只有 Walk"那一档（守卫等物种行为不变，见 DESIGN-RUN §6.6a）。
+			# ★ 倍速语义（方案 β）：_play_loop 已是单层 ⇒ get_playing_speed() ≡ speed_scale
+			#   ≡ 传入的 want / rwant（见 _play_loop 的注释与 DESIGN-RUN §9.3 INV-1）。
 			var spd := Vector2(velocity.x, velocity.z).length()
 			if spd > 0.4 and _walk_anim != "":
 				var want := clampf(spd / maxf(0.2, walk_natural_speed), 0.4, walk_max_speed_scale)
-				_play_loop(_walk_anim, want)
+				if _run_anim != "" and run_natural_speed > 0.0:
+					# ---- 有 Run 的物种：在 Walk 与 Run 之间选档 ----
+					# 档位判据 = "Walk 的倍速需求"（无量纲，见 run_switch_speed_scale 的注释）。
+					# 带滞回：起切 want >= run_switch_speed_scale；回切 want < 该值 × (1 − 滞回)。
+					if _run_latched:
+						if want < run_switch_speed_scale * (1.0 - run_switch_hysteresis):
+							_run_latched = false
+					elif want >= run_switch_speed_scale:
+						_run_latched = true
+					if _run_latched:
+						# Run 自己归一（分母是 run_natural_speed，不是 walk_natural_speed）
+						var rwant := clampf(spd / maxf(0.2, run_natural_speed),
+							run_min_speed_scale, run_max_speed_scale)
+						_play_loop(_run_anim, rwant)
+					else:
+						_play_loop(_walk_anim, want)
+				else:
+					# ---- 没有 Run 的物种（守卫等）：只有 Walk 一档 ----
+					_run_latched = false
+					_play_loop(_walk_anim, want)
 			else:
+				# 站住 → 解锁，下次起步重新按速度决定档位（避免"上一轮的 Run 状态"漏过来）
+				_run_latched = false
 				_play_loop(_idle_anim)
 		State.WINDUP:
 			# 蓄力：举棒动画 + 整体轻微脉动（"绷紧"预警，纯视觉不影响判定）
