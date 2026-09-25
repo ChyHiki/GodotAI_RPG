@@ -319,7 +319,7 @@ Idle/Hurt/Death 三段生活动画的识别 / 时长 / 循环开闭 / 播放倍�
 | 动画 | **6 段**：`Idle`(2.0s) / `Walk`(1.0s) / `AttackWindup`(0.5s) / `Attack`(0.25s) / `Hit`(0.4167s) / `Death`(1.0s) | 与守卫同一套**关键字识别**；`Walk` 是**对角步态（trot）**，正好用来验证四足循环 |
 | 血量 | `Health.max_hp` = **70** | 比守卫（100）脆 |
 | 失衡 | `parry_poise_percent` = **50% → 2 次完美格挡** | 比守卫（34% → 3 次）失衡更快，"弹反节奏"更短 |
-| 移速 | `move_speed` = **4.2 m/s** | 远快于守卫；`walk_natural_speed` 1.1724、`walk_max_speed_scale` 3.8 —— 4.2 m/s 需要 **3.58×** 播放，仍在 3.8 上限内，所以**脚步与地面不打滑** |
+| 移速 | `move_speed` = **4.2 m/s** | 远快于守卫；`walk_natural_speed` 1.1724、`walk_max_speed_scale` 3.8。⚠️ **但别据此推断"不打滑"** —— `enemy.gd:_play_loop`（`:1167`）是**两层**写法：切段那一帧 `play(name, blend, want)` 把 `custom_speed` 钉在**进入该段那帧**的 `want`，之后每帧只改属性 `speed_scale` ⇒ 实播倍速 = `want(本帧) × want(切段那帧)`，**与 3.8 上限无关、且随起步时机变化**。实测脚本 `tools/probe_anim_playback_speed.tscn`（两次"从静止起步 4.2"，钉住的因子分别是 **1.0155 / 0.5704**）；因此狼全速的真实步频**低于 4.2 m/s 应有的值**，滑步/步幅问题见 `E:\blender\blenderproject\enemies\wolf_01\DESIGN-RUN.md`（Run 段的单层语义修法） |
 | 命中盒 | 尺寸 `(1.4, 1.1, 1.5)`、偏移 `(0, 0.65, -1.2)`、`attack_damage` = **12** | 前伸的"咬合"盒（开在身前 -Z 方向） |
 | 缩放 | `model_target_height` = **1.20 m** | 由 `enemy.gd` 的**脚底对齐**逻辑自动算缩放系数 |
 | 武器 | **无**（`enemy_weapon_path = ""`） | 空串 = 徒手 → **静默跳过**、不建 `WeaponSocket` |
