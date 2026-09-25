@@ -26,10 +26,11 @@ const WOLF_TSCN := "res://scenes/enemy/wolf.tscn"
 ## 与 enemy.gd 的 model_target_height 一致（狼 1.20m）
 const TARGET_HEIGHT := 1.20
 ## 期望的动画名（enemy.gd 按关键字识别，这里核对实际导入名 + 精确名字集）
-const EXPECT_ANIMS := ["Idle", "Walk", "AttackWindup", "Attack", "Hit", "Death"]
-## 狼 6 段动画的设计内容时长（Blender 里 Action 帧区间的跨度，24 fps）
+## ★ T07：新增 Run（横驰 gallop，循环段，与 Idle/Walk 同族）。
+const EXPECT_ANIMS := ["Idle", "Walk", "Run", "AttackWindup", "Attack", "Hit", "Death"]
+## 狼 7 段动画的设计内容时长（Blender 里 Action 帧区间的跨度，24 fps）
 const DESIGN_LEN := {
-	"Idle": 2.000, "Walk": 1.000, "AttackWindup": 0.500,
+	"Idle": 2.000, "Walk": 1.000, "Run": 0.500, "AttackWindup": 0.500,
 	"Attack": 0.250, "Hit": 0.4167, "Death": 1.000,
 }
 
@@ -105,7 +106,7 @@ func _initialize() -> void:
 		for a in EXPECT_ANIMS:
 			_check(names.has(a), "存在动画 %s" % a)
 		_check(names.size() == EXPECT_ANIMS.size(),
-			"动画段数 = 6（无多余段）", "实际 %d" % names.size())
+			"动画段数 = 7（无多余段）", "实际 %d" % names.size())
 		var frame_off := 1.0 / 24.0
 		for a in EXPECT_ANIMS:
 			if not names.has(a):
@@ -126,8 +127,8 @@ func _initialize() -> void:
 			_check(absf(first_t) < 0.001, "%s 首帧已平移到 t=0" % a, "t=%.4f" % first_t)
 			_check(absf(last_t - a_res.length) < 0.005,
 				"%s 末帧时刻 = length（尾部没有空播段）" % a, "%.4fs vs %.4fs" % [last_t, a_res.length])
-		# 循环标记（enemy.gd 会给 Idle/Walk 打开 LOOP；Death 必须单次 → 不应是 LOOP）
-		for a in ["Idle", "Walk"]:
+		# 循环标记（enemy.gd 会给 Idle/Walk/Run 打开 LOOP；Death 必须单次 → 不应是 LOOP）
+		for a in ["Idle", "Walk", "Run"]:
 			if names.has(a):
 				print("  · %s 导入时 loop_mode = %d（enemy.gd 的 _set_loop 会置为 LOOP_LINEAR=1）"
 					% [a, anim.get_animation(a).loop_mode])
