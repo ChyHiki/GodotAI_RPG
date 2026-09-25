@@ -150,8 +150,11 @@ func _run_case(case_name: String) -> void:
 		max_rotz = maxf(max_rotz, absf(wolf._pivot.rotation.z))
 		final_scale = wolf._pivot.scale.x
 		final_rotz = wolf._pivot.rotation.z
-		# 在"死亡动画已播完、尸体未清"的窗口取骨骼末帧（狼 Death 1.0417s，销毁 1.297s）
-		if bone_dev < 0.0 and el >= 1.10 and el <= 1.30:
+		# 在"死亡动画已播完、尸体未清"的窗口取骨骼末帧。
+		# 【为什么用 is_playing() 而不是墙钟窗口(如 el∈[1.10,1.30])】负载波动下一整帧
+		# 可能跨过墙钟窗口 → 取不到样本 → 偶发 flaky FAIL。改为"动画停播后每帧持续刷新、
+		# 记录到 queue_free 前最后一帧"，与帧率无关，且更贴合"末帧冻结"语义。
+		if anim != null and not anim.is_playing():
 			var skel: Skeleton3D = wolf.get("_skeleton")
 			if skel != null:
 				bone_dev = _max_bone_dev_deg(skel)
