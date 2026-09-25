@@ -114,6 +114,27 @@ docs/GAME_DESIGN.md       # 设计文档与后续方向
 
 ## 验证方式（命令行）
 
+### ⚡ 一条命令跑全部探针（推荐）
+
+```powershell
+.\tools\run_probes.ps1              # 四套全跑：m1 339 + quest 113 + lock 62 + possess 36 = 550 条断言
+.\tools\run_probes.ps1 -Only m1     # 只跑一套（m1 / quest / lock / possess）
+```
+
+脚本会逐套打印 `断言 通过数/基准数`，并在断言数与基准不符时**黄色告警**（防止断言被悄悄增删）。
+`exit=0` = 全过。
+
+> **⚠️ 绝不要用 `--script` 跑探针**，也别在编辑器里对探针的 `.gd` 点「运行」。
+> 探针是 `extends Node`，**必须**作为 `.tscn` 启动。用错命令会得到两种**完全不提正确做法**的报错：
+> 1. `Can't load the script "…" as it doesn't inherit from SceneTree or MainLoop.`
+>    （`--script` 只接受 `extends SceneTree/MainLoop` 的脚本）
+> 2. `Identifier not found: EventBus` —— autoload 在 `--script` 下**不注册**，且这是**编译期**失败，
+>    会连锁拖垮所有依赖它的脚本（报错点甚至落在你没改过的 `enemy.gd`）。
+> 看着像"代码被改坏了"，实际只是命令用错。项目备忘 `.workbuddy/memory/MEMORY-godot-ops.md`
+> 里记了完整的排查顺序（**报错落在没改过的文件 → 先查调用方式，再查代码**）。
+
+下面是每一套的**原始命令**（脚本内部用的就是它们，需要在 CI 里单独调时可直接抄）：
+
 冒烟测试（加载主场景跑 240 帧）：
 
 ```powershell
@@ -152,6 +173,7 @@ docs/GAME_DESIGN.md       # 设计文档与后续方向
 
 | 工具 | 用途 |
 |---|---|
+| **`tools/run_probes.ps1`** | ⚡ **跑全部回归探针**（m1/quest/lock/possess，共 550 条断言）：`.\tools\run_probes.ps1`，可加 `-Only m1` 只跑一套。逐套打印通过数并与基准比对（数字不符会告警）。**改完代码优先跑这个** |
 | `tools/inspect_model.gd` | 打印 GLB 的节点树/骨骼/动画列表与时长 |
 | `tools/inspect_anim.gd` | 打印某条动画的每条轨道与关键帧数值（看清位移/旋转幅度） |
 | `tools/anim_capture/dodge_capture.tscn` | 自动演示 **行走 → 挥砍 → 跳跃 → 前冲 → 后撤**，配合 `--write-movie` 抓帧 |
