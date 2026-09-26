@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://tools/anim_capture/bird_capture.gd" id="1_birdcap"]
+
+[node name="BirdCapture" type="Node"]
+script = ExtResource("1_birdcap")
