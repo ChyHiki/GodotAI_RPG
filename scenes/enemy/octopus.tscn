@@ -1,0 +1,43 @@
+[gd_scene load_steps=5 format=3]
+
+[ext_resource type="Script" path="res://scripts/enemy/enemy.gd" id="1_enemy"]
+[ext_resource type="Script" path="res://scripts/components/health.gd" id="2_hp"]
+[ext_resource type="Script" path="res://scripts/components/poise.gd" id="3_poise"]
+
+[sub_resource type="CapsuleShape3D" id="CapsuleShape_octopus"]
+radius = 0.45
+height = 0.9
+
+[node name="EnemyOctopus" type="CharacterBody3D"]
+script = ExtResource("1_enemy")
+enemy_id = "octopus"
+drop_item_id = ""
+enemy_weapon_path = ""
+enemy_model_path = "res://assets/enemies/octopus_01/octopus_rigged.glb"
+model_target_height = 0.9
+move_speed = 2.2
+aggro_range = 13.0
+attack_range = 2.6
+attack_damage = 14
+attack_interval = 2.0
+recover_time = 1.2
+strike_time = 0.28
+parry_poise_percent = 25.0
+walk_natural_speed = 1.68
+walk_max_speed_scale = 2.0
+run_natural_speed = 0.0
+hitbox_size = Vector3(2.6, 1.1, 2.2)
+hitbox_offset = Vector3(0, 0.45, -1.1)
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.45, 0)
+shape = SubResource("CapsuleShape_octopus")
+
+[node name="Health" type="Node" parent="."]
+script = ExtResource("2_hp")
+max_hp = 80
+
+[node name="Poise" type="Node" parent="."]
+script = ExtResource("3_poise")
+max_poise = 100.0
+break_time = 3.0
