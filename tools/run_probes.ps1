@@ -12,11 +12,12 @@
 ##
 ## WHAT IT RUNS
 ##   1) Four gameplay probes (.tscn, from the autotest suite) -- with a hard assertion baseline.
-##   2) Eight asset validators -- added in T05 so they stop rotting in `tools/`:
+##   2) Nine asset validators -- added in T05 so they stop rotting in `tools/`:
 ##        --script class : verify_enemy_model.gd, verify_enemy_wolf.gd
 ##        .tscn   class : verify_wolf_hitbox.tscn, verify_wolf_death.tscn, verify_brute_death.tscn,
 ##                          verify_qa_negative.tscn, verify_qa_death_states.tscn,
-##                          verify_playback_invariant.tscn, verify_wolf_run.tscn
+##                          verify_playback_invariant.tscn, verify_wolf_run.tscn,
+##                          verify_enemy_bird.tscn
 ##      The two classes run differently (see the manifests below) -- do NOT mix them up:
 ##        * `--script res://...gd`  -> only works for scripts that `extends SceneTree`.
 ##        * `res://...tscn`         -> for `extends Node` scripts (need a scene + autoloads).
@@ -88,7 +89,8 @@ $SceneValidators = @(
     @{ Name = "verify_qa_negative"; Path = "res://tools/verify_qa_negative.tscn" },
     @{ Name = "verify_qa_death_states"; Path = "res://tools/verify_qa_death_states.tscn" },
     @{ Name = "verify_playback_invariant"; Path = "res://tools/verify_playback_invariant.tscn" },
-    @{ Name = "verify_wolf_run"; Path = "res://tools/verify_wolf_run.tscn" }
+    @{ Name = "verify_wolf_run"; Path = "res://tools/verify_wolf_run.tscn" },
+    @{ Name = "verify_enemy_bird"; Path = "res://tools/verify_enemy_bird.tscn" }
 )
 
 # ------------------------------------------------------------------
@@ -101,7 +103,8 @@ $SceneValidators = @(
 #     T05 : 4 probes + 7 validators = 11
 #     T06 : + verify_playback_invariant      = 12   (software-engineer-2)
 #     T08 : + verify_wolf_run (current + 1)  = 13
-$ExpectedSuiteCount = 13
+#     T11b: + verify_enemy_bird (current + 1) = 14   (鸟 asset+场景+Walk/Run 换挡)
+$ExpectedSuiteCount = 14
 $actualSuiteCount = $Probes.Count + $ScriptValidators.Count + $SceneValidators.Count
 
 $failed = @()

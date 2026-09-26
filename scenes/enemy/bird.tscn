@@ -1,0 +1,45 @@
+[gd_scene load_steps=5 format=3]
+
+[ext_resource type="Script" path="res://scripts/enemy/enemy.gd" id="1_enemy"]
+[ext_resource type="Script" path="res://scripts/components/health.gd" id="2_hp"]
+[ext_resource type="Script" path="res://scripts/components/poise.gd" id="3_poise"]
+
+[sub_resource type="CapsuleShape3D" id="CapsuleShape_bird"]
+radius = 0.35
+height = 1.3
+
+[node name="EnemyBird" type="CharacterBody3D"]
+script = ExtResource("1_enemy")
+enemy_id = "bird"
+drop_item_id = ""
+enemy_weapon_path = ""
+enemy_model_path = "res://assets/enemies/bird_01/bird_rigged.glb"
+model_target_height = 1.6
+move_speed = 2.6
+aggro_range = 13.0
+attack_range = 2.0
+attack_damage = 10
+attack_interval = 1.0
+parry_poise_percent = 100.0
+walk_natural_speed = 1.6226
+walk_max_speed_scale = 2.0
+run_natural_speed = 1.937
+run_min_speed_scale = 0.8
+run_max_speed_scale = 1.75
+run_switch_speed_scale = 1.45
+run_switch_hysteresis = 0.15
+hitbox_size = Vector3(1, 0.9, 1.6)
+hitbox_offset = Vector3(0, 1.05, -1.3)
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.65, 0)
+shape = SubResource("CapsuleShape_bird")
+
+[node name="Health" type="Node" parent="."]
+script = ExtResource("2_hp")
+max_hp = 45
+
+[node name="Poise" type="Node" parent="."]
+script = ExtResource("3_poise")
+max_poise = 100.0
+break_time = 3.0
