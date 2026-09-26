@@ -86,19 +86,15 @@ func _ready() -> void:
 	await _wait(2.0)
 
 	# ---------- 4) Death（斜前 45°，看八腕外撑→一软→塌成一摊）----------
-	# 【★ 抓帧专用"钉尸"，仅为让死亡演出可读】引擎 _die() 会把 collision_layer/mask 归零，
-	#   而 _physics_process 在 not is_on_floor() 时**继续加重力**（enemy.gd L396-397），
-	#   于是尸体失去碰撞后**穿地加速下落**，跟随镜头一并坠入虚空 —— 实测 1.2s 内 y 从 0 → -20m。
-	#   （狼的 combat 预览末帧同样只剩背景色，是同一**既有**行为，非章鱼特有。）
-	#   死亡演出由 AnimationPlayer 在 _process 里驱动（enemy.gd L1200-1219），不依赖物理；
-	#   这里在死亡瞬间关掉物理步进，尸体便留在原地把"外撑→一软→塌成一摊"演完。
-	#   ⚠️ 这是**取证手段**，不代表引擎行为：引擎实际行为（尸体会穿地）见交付报告。
+	# 【T12c 起无需"钉尸"】早期版本因 enemy.gd 的死亡重力缺陷（_die() 关碰撞后 is_on_floor() 永假、
+	#   重力无界积分 → 尸体穿地下坠、镜头跟着坠入虚空），不得不在死亡瞬间 set_physics_process(false)
+	#   把尸体钉住才能看。该缺陷已在 T12c 根修（重力行加 _dead 守卫 + _die() 清 velocity.y）；
+	#   现在尸体自然留在原地演完死亡 —— 本段即该修复的**视觉证据**，无需任何抓帧干预。
 	_seg("death")
 	_oct.call("take_damage", 999, _oct.global_position + Vector3(-1, 0, 0))
-	_oct.set_physics_process(false)           # ★ 钉住尸体（抓帧专用，理由见上）
 	await _wait(0.4)
 	_print_state("death", "settle")
-	await _wait(1.1)                          # 死亡动画 1.042s + 尸体 ~1.29s 后 queue_free
+	await _wait(1.1)                          # 死亡动画 ~1.04s + 尸体 ~1.29s 后 queue_free
 
 	print("CAPTURE: 结束 frames_drawn=%d" % Engine.get_frames_drawn())
 	get_tree().quit(0)
