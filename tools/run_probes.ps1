@@ -12,12 +12,13 @@
 ##
 ## WHAT IT RUNS
 ##   1) Four gameplay probes (.tscn, from the autotest suite) -- with a hard assertion baseline.
-##   2) Eleven asset validators -- added in T05 so they stop rotting in `tools/`:
+##   2) Twelve asset validators -- added in T05 so they stop rotting in `tools/`:
 ##        --script class : verify_enemy_model.gd, verify_enemy_wolf.gd
 ##        .tscn   class : verify_wolf_hitbox.tscn, verify_wolf_death.tscn, verify_brute_death.tscn,
 ##                          verify_qa_negative.tscn, verify_qa_death_states.tscn,
 ##                          verify_playback_invariant.tscn, verify_wolf_run.tscn,
-##                          verify_enemy_bird.tscn, verify_bird_hitbox.tscn
+##                          verify_enemy_bird.tscn, verify_bird_hitbox.tscn,
+##                          verify_enemy_octopus.tscn
 ##      The two classes run differently (see the manifests below) -- do NOT mix them up:
 ##        * `--script res://...gd`  -> only works for scripts that `extends SceneTree`.
 ##        * `res://...tscn`         -> for `extends Node` scripts (need a scene + autoloads).
@@ -25,7 +26,7 @@
 ## USAGE
 ##   .\tools\run_probes.ps1               # probes + validators (default)
 ##   .\tools\run_probes.ps1 -Only m1      # one probe: m1 | quest | lock | possess
-##   .\tools\run_probes.ps1 -Verify       # only the 11 validators (skip the 4 probes)
+##   .\tools\run_probes.ps1 -Verify       # only the 12 validators (skip the 4 probes)
 ##   .\tools\run_probes.ps1 -Verbose      # print log tails for unhealthy entries
 ##
 ## EXIT CODE: 0 = everything passed; 1 = something failed; 3 = Godot binary not found.
@@ -91,7 +92,8 @@ $SceneValidators = @(
     @{ Name = "verify_playback_invariant"; Path = "res://tools/verify_playback_invariant.tscn" },
     @{ Name = "verify_wolf_run"; Path = "res://tools/verify_wolf_run.tscn" },
     @{ Name = "verify_enemy_bird"; Path = "res://tools/verify_enemy_bird.tscn" },
-    @{ Name = "verify_bird_hitbox"; Path = "res://tools/verify_bird_hitbox.tscn" }
+    @{ Name = "verify_bird_hitbox"; Path = "res://tools/verify_bird_hitbox.tscn" },
+    @{ Name = "verify_enemy_octopus"; Path = "res://tools/verify_enemy_octopus.tscn" }
 )
 
 # ------------------------------------------------------------------
@@ -106,7 +108,8 @@ $SceneValidators = @(
 #     T08 : + verify_wolf_run (current + 1)  = 13
 #     T11b: + verify_enemy_bird (current + 1) = 14    (bird asset + scene + Walk/Run switch)
 #     T11c: + verify_bird_hitbox (current + 1) = 15   (bird hitbox end-to-end + negative control)
-$ExpectedSuiteCount = 15
+#     T12b: + verify_enemy_octopus (current + 1) = 16 (octopus scene + known-limit rebound record)
+$ExpectedSuiteCount = 16
 $actualSuiteCount = $Probes.Count + $ScriptValidators.Count + $SceneValidators.Count
 
 $failed = @()
