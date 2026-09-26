@@ -393,7 +393,9 @@ func get_target() -> Node3D:
 func _physics_process(delta: float) -> void:
 	_state_time += delta
 	_attack_cd = maxf(0.0, _attack_cd - delta)   # 冷却递减
-	if not is_on_floor():
+	# ★ 死亡守卫（T12c 根修）：_die() 会把 collision_layer/mask 归零 → is_on_floor() 永假，
+	#   无守卫时重力会在尸体上**无界积分**导致穿地。活体照常受重力，仅死亡后停止积分。
+	if not _dead and not is_on_floor():
 		velocity.y -= GRAVITY * delta            # 重力
 
 	var target := get_target()                   # 当前目标(可能为 null)
@@ -737,6 +739,7 @@ func _die() -> void:
 	_dead = true
 	state = State.DEAD
 	_state_time = 0.0
+	velocity.y = 0.0               # ★ 清掉死亡瞬间残留的竖直速度（配合 _physics_process 的死亡重力守卫，防止尸体继续漂）
 	collision_layer = 0            # 关碰撞：别人(玩家/镜头)不再被尸体挡住
 	collision_mask = 0
 	_set_hitbox_active(false)
