@@ -104,8 +104,8 @@ $SceneValidators = @(
 #     T05 : 4 probes + 7 validators = 11
 #     T06 : + verify_playback_invariant      = 12   (software-engineer-2)
 #     T08 : + verify_wolf_run (current + 1)  = 13
-#     T11b: + verify_enemy_bird (current + 1) = 14   (鸟 asset+场景+Walk/Run 换挡)
-#     T11c: + verify_bird_hitbox (current + 1) = 15  (鸟 命中盒端到端 + 负控)
+#     T11b: + verify_enemy_bird (current + 1) = 14    (bird asset + scene + Walk/Run switch)
+#     T11c: + verify_bird_hitbox (current + 1) = 15   (bird hitbox end-to-end + negative control)
 $ExpectedSuiteCount = 15
 $actualSuiteCount = $Probes.Count + $ScriptValidators.Count + $SceneValidators.Count
 
