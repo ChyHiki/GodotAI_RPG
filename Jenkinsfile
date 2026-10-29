@@ -55,6 +55,18 @@ pipeline {
                 sh '"$GODOT" --headless --path . res://tools/autotest/m1_autotest.tscn'
             }
         }
+
+        stage('辅助探针（3 套）') {
+            steps {
+                // 每个探针失败即 quit(1)，sh 带 -e 会立刻中断并让本 stage 变红
+                sh '''
+                    for probe in lock_toggle_probe possess_probe quest_probe; do
+                        echo "===== $probe ====="
+                        "$GODOT" --headless --path . "res://tools/autotest/$probe.tscn"
+                    done
+                '''
+            }
+        }
     }
 
     post {
